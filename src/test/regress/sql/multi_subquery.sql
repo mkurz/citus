@@ -840,11 +840,7 @@ LIMIT
 SET client_min_messages TO WARNING;
 DROP TABLE users, events;
 
-SELECT run_command_on_master_and_workers($f$
-	
-	DROP TYPE user_composite_type CASCADE;
-
-$f$);
+DROP TYPE user_composite_type CASCADE;
 
 -- createed in multi_behavioral_analytics_create_table
 DROP FUNCTION run_command_on_master_and_workers(p_sql text);
