@@ -106,7 +106,6 @@ SET search_path TO public;
 CREATE COLLATION citus_mx_test_schema.english (LOCALE=:current_locale);
 
 SET search_path TO public;
-CREATE TYPE citus_mx_test_schema.new_composite_type as (key1 text, key2 text);
 CREATE TYPE order_side_mx AS ENUM ('buy', 'sell');
 
 -- now create required stuff in the worker 2
@@ -160,7 +159,6 @@ SET search_path TO public;
 CREATE COLLATION citus_mx_test_schema.english (LOCALE=:current_locale);
 
 SET search_path TO public;
-CREATE TYPE citus_mx_test_schema.new_composite_type as (key1 text, key2 text);
 CREATE TYPE order_side_mx AS ENUM ('buy', 'sell');
 
 -- connect back to the master, and do some more tests

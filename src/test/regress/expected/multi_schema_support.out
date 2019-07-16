@@ -529,13 +529,6 @@ SELECT n_comment FROM nation_hash_collation_search_path ORDER BY n_comment COLLA
 --test composite types with schema
 SET search_path TO public;
 CREATE TYPE test_schema_support.new_composite_type as (key1 text, key2 text);
--- create type in worker node 1 in schema
-\c - - - :worker_1_port
-CREATE TYPE test_schema_support.new_composite_type as (key1 text, key2 text);
--- create type in worker node 2 in schema
-\c - - - :worker_2_port
-CREATE TYPE test_schema_support.new_composite_type as (key1 text, key2 text);
-\c - - - :master_port
 CREATE TABLE test_schema_support.nation_hash_composite_types(
     n_nationkey integer not null,
     n_name char(25) not null,
