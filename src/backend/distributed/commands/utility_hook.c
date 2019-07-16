@@ -282,25 +282,50 @@ multi_ProcessUtility(PlannedStmt *pstmt,
 		if (IsA(parsetree, DropStmt))
 		{
 			DropStmt *dropStatement = (DropStmt *) parsetree;
-			if (dropStatement->removeType == OBJECT_INDEX)
+			switch(dropStatement->removeType)
 			{
-				ddlJobs = PlanDropIndexStmt(dropStatement, queryString);
+				case OBJECT_INDEX:
+				{
+					ddlJobs = PlanDropIndexStmt(dropStatement, queryString);
+					break;
+				}
+
+				case OBJECT_TABLE:
+				{
+					ProcessDropTableStmt(dropStatement);
+					break;
+				}
+
+				case OBJECT_SCHEMA:
+				{
+					ProcessDropSchemaStmt(dropStatement);
+					break;
+				}
+
+				case OBJECT_POLICY:
+				{
+					ddlJobs = PlanDropPolicyStmt(dropStatement, queryString);
+					break;
+				}
+
+				case OBJECT_TYPE:
+				{
+					ddlJobs = PlanDropTypeStmt(dropStatement, queryString);
+				}
+
+				default:
+				{
+					/* unsupported type, skipping*/
+				}
+
 			}
 
-			if (dropStatement->removeType == OBJECT_TABLE)
-			{
-				ProcessDropTableStmt(dropStatement);
-			}
+		}
 
-			if (dropStatement->removeType == OBJECT_SCHEMA)
-			{
-				ProcessDropSchemaStmt(dropStatement);
-			}
-
-			if (dropStatement->removeType == OBJECT_POLICY)
-			{
-				ddlJobs = PlanDropPolicyStmt(dropStatement, queryString);
-			}
+		if (IsA(parsetree, CompositeTypeStmt))
+		{
+			CompositeTypeStmt *compositeTypeStmt = (CompositeTypeStmt *) parsetree;
+			ddlJobs = PlanCompositeTypeStmt(compositeTypeStmt, queryString);
 		}
 
 		if (IsA(parsetree, AlterTableStmt))

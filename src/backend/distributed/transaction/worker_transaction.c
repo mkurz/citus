@@ -38,7 +38,7 @@
  * 2PC.
  */
 void
-SendCommandToWorker(char *nodeName, int32 nodePort, char *command)
+SendCommandToWorker(char *nodeName, int32 nodePort, const char *command)
 {
 	MultiConnection *transactionConnection = NULL;
 	char *nodeUser = CitusExtensionOwnerName();
