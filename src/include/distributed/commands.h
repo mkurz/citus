@@ -119,6 +119,9 @@ extern void ErrorIfUnsupportedConstraint(Relation relation, char distributionMet
 /* truncate.c - forward declarations */
 extern void ProcessTruncateStatement(TruncateStmt *truncateStatement);
 
+/* type.c - forward declarations */
+extern List * PlanCompositeTypeStmt(CompositeTypeStmt *stmt, const char *queryString);
+extern List * PlanDropTypeStmt(DropStmt *stmt, const char *queryString);
 
 /* vacuum.c - froward declarations */
 extern void ProcessVacuumStmt(VacuumStmt *vacuumStmt, const char *vacuumCommand);
