@@ -6,7 +6,7 @@ SELECT run_command_on_workers('CREATE SCHEMA subquery_prepared_statements;');
 
 SET search_path TO subquery_prepared_statements, public;
 
-CREATE TYPE xy AS (x int, y int);
+CREATE TYPE subquery_prepared_statements.xy AS (x int, y int);
 
 SET client_min_messages TO DEBUG1;
 
