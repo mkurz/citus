@@ -282,7 +282,7 @@ multi_ProcessUtility(PlannedStmt *pstmt,
 		if (IsA(parsetree, DropStmt))
 		{
 			DropStmt *dropStatement = (DropStmt *) parsetree;
-			switch(dropStatement->removeType)
+			switch (dropStatement->removeType)
 			{
 				case OBJECT_INDEX:
 				{
@@ -317,9 +317,7 @@ multi_ProcessUtility(PlannedStmt *pstmt,
 				{
 					/* unsupported type, skipping*/
 				}
-
 			}
-
 		}
 
 		if (IsA(parsetree, CompositeTypeStmt))
