@@ -842,9 +842,6 @@ DROP TABLE users, events;
 
 DROP TYPE user_composite_type CASCADE;
 
--- createed in multi_behavioral_analytics_create_table
-DROP FUNCTION run_command_on_master_and_workers(p_sql text);
-
 SET client_min_messages TO DEFAULT;
 
 SET citus.subquery_pushdown to OFF;
