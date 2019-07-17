@@ -43,6 +43,7 @@ PlanCompositeTypeStmt(CompositeTypeStmt *stmt, const char *queryString)
 	return NULL;
 }
 
+
 List *
 PlanDropTypeStmt(DropStmt *stmt, const char *queryString)
 {
@@ -58,6 +59,7 @@ PlanDropTypeStmt(DropStmt *stmt, const char *queryString)
 
 	return NULL;
 }
+
 
 List *
 PlanCreateEnumStmt(CreateEnumStmt *createEnumStmt, const char *queryString)
