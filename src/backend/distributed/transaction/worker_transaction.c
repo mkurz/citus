@@ -87,7 +87,7 @@ SendCommandToFirstWorker(char *command)
  * owner to ensure write access to the Citus metadata tables.
  */
 void
-SendCommandToWorkers(TargetWorkerSet targetWorkerSet, char *command)
+SendCommandToWorkers(TargetWorkerSet targetWorkerSet, const char *command)
 {
 	SendCommandToWorkersParams(targetWorkerSet, command, 0, NULL, NULL);
 }
@@ -154,7 +154,7 @@ SendBareCommandListToWorkers(TargetWorkerSet targetWorkerSet, List *commandList)
  * respectively.
  */
 void
-SendCommandToWorkersParams(TargetWorkerSet targetWorkerSet, char *command,
+SendCommandToWorkersParams(TargetWorkerSet targetWorkerSet, const char *command,
 						   int parameterCount, const Oid *parameterTypes,
 						   const char *const *parameterValues)
 {

@@ -22,22 +22,23 @@
 #include "postgres.h"
 
 #include "distributed/commands.h"
+#include "distributed/metadata_sync.h"
+#include "distributed/transaction_management.h"
 #include "distributed/worker_manager.h"
 #include "distributed/worker_transaction.h"
 
 List *
 PlanCompositeTypeStmt(CompositeTypeStmt *stmt, const char *queryString)
 {
-	List *workerNodeList = ActivePrimaryNodeList();
-	WorkerNode *workerNode = NULL;
-	ListCell *workerNodeCell = NULL;
+	/*
+	 * managing types can only be done on the coordinator if ddl propagation is on. when
+	 * it is off we will never get here
+	 */
+	EnsureCoordinator();
 
-	foreach(workerNodeCell, workerNodeList)
-	{
-		workerNode = (WorkerNode *) lfirst(workerNodeCell);
-		SendCommandToWorker(workerNode->workerName, workerNode->workerPort,
-							queryString);
-	}
+	/* to prevent recursion with mx we disable ddl propagation */
+	SendCommandToWorkers(ALL_WORKERS, DISABLE_DDL_PROPAGATION);
+	SendCommandToWorkers(ALL_WORKERS, queryString);
 
 	return NULL;
 }
@@ -45,18 +46,15 @@ PlanCompositeTypeStmt(CompositeTypeStmt *stmt, const char *queryString)
 List *
 PlanDropTypeStmt(DropStmt *stmt, const char *queryString)
 {
-	List *workerNodeList = ActivePrimaryNodeList();
-	WorkerNode *workerNode = NULL;
-	ListCell *workerNodeCell = NULL;
+	/*
+	 * managing types can only be done on the coordinator if ddl propagation is on. when
+	 * it is off we will never get here
+	 */
+	EnsureCoordinator();
 
-	// TODO test if drop statement for type is for a type that is supported by citus
-
-	foreach(workerNodeCell, workerNodeList)
-	{
-		workerNode = (WorkerNode *) lfirst(workerNodeCell);
-		SendCommandToWorker(workerNode->workerName, workerNode->workerPort,
-							queryString);
-	}
+	/* to prevent recursion with mx we disable ddl propagation */
+	SendCommandToWorkers(ALL_WORKERS, DISABLE_DDL_PROPAGATION);
+	SendCommandToWorkers(ALL_WORKERS, queryString);
 
 	return NULL;
 }
@@ -64,16 +62,15 @@ PlanDropTypeStmt(DropStmt *stmt, const char *queryString)
 List *
 PlanCreateEnumStmt(CreateEnumStmt *createEnumStmt, const char *queryString)
 {
-	List *workerNodeList = ActivePrimaryNodeList();
-	WorkerNode *workerNode = NULL;
-	ListCell *workerNodeCell = NULL;
+	/*
+	 * managing types can only be done on the coordinator if ddl propagation is on. when
+	 * it is off we will never get here
+	 */
+	EnsureCoordinator();
 
-	foreach(workerNodeCell, workerNodeList)
-	{
-		workerNode = (WorkerNode *) lfirst(workerNodeCell);
-		SendCommandToWorker(workerNode->workerName, workerNode->workerPort,
-							queryString);
-	}
+	/* to prevent recursion with mx we disable ddl propagation */
+	SendCommandToWorkers(ALL_WORKERS, DISABLE_DDL_PROPAGATION);
+	SendCommandToWorkers(ALL_WORKERS, queryString);
 
 	return NULL;
 }
