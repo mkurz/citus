@@ -732,14 +732,6 @@ SET citus.task_executor_type TO "real-time";
 SET search_path TO public;
 ALTER TABLE test_schema_support.nation_hash SET SCHEMA public;
 
--- we will use this function in next test
-CREATE FUNCTION run_command_on_coordinator_and_workers(p_sql text)
-RETURNS void LANGUAGE plpgsql AS $$
-BEGIN
-     EXECUTE p_sql;
-     PERFORM run_command_on_workers(p_sql);
-END;$$;
-
 -- test schema propagation with user other than current user
 SELECT run_command_on_coordinator_and_workers('CREATE USER "test-user"');
 SELECT run_command_on_coordinator_and_workers('GRANT ALL ON DATABASE postgres to "test-user"');

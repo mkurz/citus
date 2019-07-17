@@ -105,9 +105,6 @@ CREATE OPERATOR citus_mx_test_schema.=== (
 SET search_path TO public;
 CREATE COLLATION citus_mx_test_schema.english (LOCALE=:current_locale);
 
-SET search_path TO public;
-CREATE TYPE order_side_mx AS ENUM ('buy', 'sell');
-
 -- now create required stuff in the worker 2
 \c - - - :worker_2_port
 
@@ -157,9 +154,6 @@ CREATE OPERATOR citus_mx_test_schema.=== (
 
 SET search_path TO public;
 CREATE COLLATION citus_mx_test_schema.english (LOCALE=:current_locale);
-
-SET search_path TO public;
-CREATE TYPE order_side_mx AS ENUM ('buy', 'sell');
 
 -- connect back to the master, and do some more tests
 \c - - - :master_port
