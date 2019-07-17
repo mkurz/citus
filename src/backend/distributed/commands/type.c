@@ -60,3 +60,20 @@ PlanDropTypeStmt(DropStmt *stmt, const char *queryString)
 
 	return NULL;
 }
+
+List *
+PlanCreateEnumStmt(CreateEnumStmt *createEnumStmt, const char *queryString)
+{
+	List *workerNodeList = ActivePrimaryNodeList();
+	WorkerNode *workerNode = NULL;
+	ListCell *workerNodeCell = NULL;
+
+	foreach(workerNodeCell, workerNodeList)
+	{
+		workerNode = (WorkerNode *) lfirst(workerNodeCell);
+		SendCommandToWorker(workerNode->workerName, workerNode->workerPort,
+							queryString);
+	}
+
+	return NULL;
+}

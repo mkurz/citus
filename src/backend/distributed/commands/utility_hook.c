@@ -328,6 +328,12 @@ multi_ProcessUtility(PlannedStmt *pstmt,
 			ddlJobs = PlanCompositeTypeStmt(compositeTypeStmt, queryString);
 		}
 
+		if (IsA(parsetree, CreateEnumStmt))
+		{
+			CreateEnumStmt *createEnumStmt = (CreateEnumStmt *) parsetree;
+			ddlJobs = PlanCreateEnumStmt(createEnumStmt, queryString);
+		}
+
 		if (IsA(parsetree, AlterTableStmt))
 		{
 			AlterTableStmt *alterTableStmt = (AlterTableStmt *) parsetree;
