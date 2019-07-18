@@ -61,7 +61,6 @@ CREATE TYPE order_side_mx AS ENUM ('buy', 'sell');
 \c - - - :worker_1_port
 
 -- create schema to test schema support
-CREATE SCHEMA citus_mx_test_schema;
 CREATE SCHEMA citus_mx_test_schema_join_1;
 CREATE SCHEMA citus_mx_test_schema_join_2;
 
@@ -109,7 +108,6 @@ CREATE COLLATION citus_mx_test_schema.english (LOCALE=:current_locale);
 \c - - - :worker_2_port
 
 -- create schema to test schema support
-CREATE SCHEMA citus_mx_test_schema;
 CREATE SCHEMA citus_mx_test_schema_join_1;
 CREATE SCHEMA citus_mx_test_schema_join_2;
 
