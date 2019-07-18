@@ -139,7 +139,7 @@ master_create_distributed_table(PG_FUNCTION_ARGS)
 	 * shard creation depends on the schema being present and visible from all
 	 * sessions.
 	 */
-	EnsureSchemaExistsOnAllNodes(relationId);
+	EnsureSchemaForRelationExistsOnAllNodes(relationId);
 
 	/*
 	 * Lock target relation with an exclusive lock - there's no way to make
@@ -213,7 +213,7 @@ create_distributed_table(PG_FUNCTION_ARGS)
 	 * shard creation depends on the schema being present and visible from all
 	 * sessions.
 	 */
-	EnsureSchemaExistsOnAllNodes(relationId);
+	EnsureSchemaForRelationExistsOnAllNodes(relationId);
 
 	/*
 	 * Lock target relation with an exclusive lock - there's no way to make
@@ -279,7 +279,7 @@ create_reference_table(PG_FUNCTION_ARGS)
 	 * shard creation depends on the schema being present and visible from all
 	 * sessions.
 	 */
-	EnsureSchemaExistsOnAllNodes(relationId);
+	EnsureSchemaForRelationExistsOnAllNodes(relationId);
 
 	/*
 	 * Lock target relation with an exclusive lock - there's no way to make
