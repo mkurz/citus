@@ -61,6 +61,8 @@ PlanCompositeTypeStmt(CompositeTypeStmt *stmt, const char *queryString)
 
 	/* reconstruct creation statement in a portable fashion */
 	compositeTypeStmtSql = get_composite_type_stmt_sql(stmt);
+	ereport(LOG, (errmsg("deparsed composite type statement"),
+				  errdetail("sql: %s", compositeTypeStmtSql)));
 
 	/* to prevent recursion with mx we disable ddl propagation */
 	/* TODO, mx expects the extension owner to be used here, this requires an alter owner statement as well */
@@ -181,5 +183,12 @@ static void
 appendColumnDef(StringInfo str, ColumnDef *columnDef)
 {
 	Oid typeOid = LookupTypeNameOid(NULL, columnDef->typeName, false);
+	Oid collationOid = GetColumnDefCollation(NULL, columnDef, typeOid);
 	appendStringInfo(str, "%s %s", columnDef->colname, format_type_be_qualified(typeOid));
+
+	if (OidIsValid(collationOid))
+	{
+		const char *collationName = get_collation_name(collationOid);
+		appendStringInfo(str, " COLLATE %s", quote_identifier(collationName));
+	}
 }
