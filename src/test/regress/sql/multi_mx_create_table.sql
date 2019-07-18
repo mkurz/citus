@@ -108,7 +108,7 @@ CREATE COLLATION citus_mx_test_schema.english (LOCALE=:current_locale);
 \c - - - :worker_2_port
 
 -- create schema to test schema support
-gCREATE SCHEMA citus_mx_test_schema_join_1;
+CREATE SCHEMA citus_mx_test_schema_join_1;
 CREATE SCHEMA citus_mx_test_schema_join_2;
 
 
