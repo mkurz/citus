@@ -32,11 +32,13 @@ extern List * GetWorkerTransactions(void);
 extern void SendCommandToWorker(char *nodeName, int32 nodePort, const char *command);
 extern void SendCommandToFirstWorker(char *command);
 extern void SendCommandToWorkers(TargetWorkerSet targetWorkerSet, const char *command);
+extern void SendCommandToWorkersAsUser(TargetWorkerSet targetWorkerSet,
+									   const char *command, const char *user);
 extern void SendBareCommandListToWorkers(TargetWorkerSet targetWorkerSet,
 										 List *commandList);
 extern void SendCommandToWorkersParams(TargetWorkerSet targetWorkerSet,
-									   const char *command, int parameterCount,
-									   const Oid *parameterTypes,
+									   const char *command, const char *user,
+									   int parameterCount, const Oid *parameterTypes,
 									   const char *const *parameterValues);
 extern void SendCommandListToWorkerInSingleTransaction(char *nodeName, int32 nodePort,
 													   char *nodeUser, List *commandList);

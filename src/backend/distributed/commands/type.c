@@ -37,8 +37,8 @@ PlanCompositeTypeStmt(CompositeTypeStmt *stmt, const char *queryString)
 	EnsureCoordinator();
 
 	/* to prevent recursion with mx we disable ddl propagation */
-	SendCommandToWorkers(ALL_WORKERS, DISABLE_DDL_PROPAGATION);
-	SendCommandToWorkers(ALL_WORKERS, queryString);
+	SendCommandToWorkersAsUser(ALL_WORKERS, DISABLE_DDL_PROPAGATION, NULL);
+	SendCommandToWorkersAsUser(ALL_WORKERS, queryString, NULL);
 
 	return NULL;
 }
@@ -54,8 +54,8 @@ PlanDropTypeStmt(DropStmt *stmt, const char *queryString)
 	EnsureCoordinator();
 
 	/* to prevent recursion with mx we disable ddl propagation */
-	SendCommandToWorkers(ALL_WORKERS, DISABLE_DDL_PROPAGATION);
-	SendCommandToWorkers(ALL_WORKERS, queryString);
+	SendCommandToWorkersAsUser(ALL_WORKERS, DISABLE_DDL_PROPAGATION, NULL);
+	SendCommandToWorkersAsUser(ALL_WORKERS, queryString, NULL);
 
 	return NULL;
 }
@@ -71,8 +71,8 @@ PlanCreateEnumStmt(CreateEnumStmt *createEnumStmt, const char *queryString)
 	EnsureCoordinator();
 
 	/* to prevent recursion with mx we disable ddl propagation */
-	SendCommandToWorkers(ALL_WORKERS, DISABLE_DDL_PROPAGATION);
-	SendCommandToWorkers(ALL_WORKERS, queryString);
+	SendCommandToWorkersAsUser(ALL_WORKERS, DISABLE_DDL_PROPAGATION, NULL);
+	SendCommandToWorkersAsUser(ALL_WORKERS, queryString, NULL);
 
 	return NULL;
 }
