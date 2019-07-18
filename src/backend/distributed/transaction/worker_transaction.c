@@ -89,7 +89,22 @@ SendCommandToFirstWorker(char *command)
 void
 SendCommandToWorkers(TargetWorkerSet targetWorkerSet, const char *command)
 {
-	SendCommandToWorkersParams(targetWorkerSet, command, 0, NULL, NULL);
+	SendCommandToWorkersParams(targetWorkerSet, command, CitusExtensionOwnerName(),
+							   0, NULL, NULL);
+}
+
+
+/*
+ * SendCommandToWorkersAsUser sends a command to all workers in
+ * parallel as the specified user, NULL means the current user.
+ * Commands are committed on the workers when the local
+ * transaction commits.
+ */
+void
+SendCommandToWorkersAsUser(TargetWorkerSet targetWorkerSet, const char *command,
+						   const char *user)
+{
+	SendCommandToWorkersParams(targetWorkerSet, command, user, 0, NULL, NULL);
 }
 
 
@@ -155,14 +170,13 @@ SendBareCommandListToWorkers(TargetWorkerSet targetWorkerSet, List *commandList)
  */
 void
 SendCommandToWorkersParams(TargetWorkerSet targetWorkerSet, const char *command,
-						   int parameterCount, const Oid *parameterTypes,
-						   const char *const *parameterValues)
+						   const char *user, int parameterCount,
+						   const Oid *parameterTypes, const char *const *parameterValues)
 {
 	List *connectionList = NIL;
 	ListCell *connectionCell = NULL;
 	List *workerNodeList = ActivePrimaryNodeList();
 	ListCell *workerNodeCell = NULL;
-	char *nodeUser = CitusExtensionOwnerName();
 
 	BeginOrContinueCoordinatedTransaction();
 	CoordinatedTransactionUse2PC();
@@ -189,7 +203,7 @@ SendCommandToWorkersParams(TargetWorkerSet targetWorkerSet, const char *command,
 		}
 
 		connection = StartNodeUserDatabaseConnection(connectionFlags, nodeName, nodePort,
-													 nodeUser, NULL);
+													 user, NULL);
 
 		MarkRemoteTransactionCritical(connection);
 
@@ -197,12 +211,7 @@ SendCommandToWorkersParams(TargetWorkerSet targetWorkerSet, const char *command,
 	}
 
 	/* finish opening connections */
-	foreach(connectionCell, connectionList)
-	{
-		MultiConnection *connection = (MultiConnection *) lfirst(connectionCell);
-
-		FinishConnectionEstablishment(connection);
-	}
+	FinishConnectionListEstablishment(connectionList);
 
 	RemoteTransactionsBeginIfNecessary(connectionList);
 
