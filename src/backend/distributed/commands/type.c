@@ -21,11 +21,11 @@
 
 #include "postgres.h"
 
-#include "server/catalog/namespace.h"
-#include "server/nodes/makefuncs.h"
-#include "server/parser/parse_type.h"
-#include "server/utils/builtins.h"
-#include "server/utils/lsyscache.h"
+#include "catalog/namespace.h"
+#include "nodes/makefuncs.h"
+#include "parser/parse_type.h"
+#include "utils/builtins.h"
+#include "utils/lsyscache.h"
 
 #include "distributed/commands.h"
 #include "distributed/metadata_sync.h"
