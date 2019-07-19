@@ -22,7 +22,7 @@
 #include "postgres.h"
 
 #include "catalog/namespace.h"
-#include "nodes/makefuncs.h"
+#include "catalog/pg_type.h"
 #include "parser/parse_type.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
@@ -36,6 +36,8 @@
 
 /* forward declaration for helper functions*/
 static void makeRangeVarQualified(RangeVar *var);
+static List * FilterNameListForDistributedTypes(List *objects);
+static bool type_is_distributed(Oid typid);
 
 
 /* forward declaration for deparse functions */
@@ -47,6 +49,10 @@ static void appendColumnDefList(StringInfo str, List *columnDefs);
 static const char * deparse_create_enum_stmt(CreateEnumStmt *stmt);
 static void appendCreateEnumStmt(StringInfo str, CreateEnumStmt *stmt);
 static void appendStringList(StringInfo str, List *strings);
+
+static const char * deparse_drop_type_stmt(DropStmt *stmt);
+static void appendDropTypeStmt(StringInfo buf, DropStmt *stmt);
+static void appendObjectList(StringInfo buf, List *objects);
 
 
 List *
@@ -117,14 +123,40 @@ List *
 PlanDropTypeStmt(DropStmt *stmt, const char *queryString)
 {
 	/*
+	 * We swap the list of objects to remove during deparse so we need a reference back to
+	 * the old list to put back
+	 */
+	List *oldTypes = stmt->objects;
+	List *distributedTypes = FilterNameListForDistributedTypes(oldTypes);
+	const char *dropStmtSql = NULL;
+
+	if (list_length(distributedTypes) <= 0)
+	{
+		/*
+		 * no distributed types to drop, we allow local drops of non distributed types on
+		 * workers as well, hence we perform this check before ensuring being a
+		 * coordinator
+		 */
+		return NULL;
+	}
+
+	/*
 	 * managing types can only be done on the coordinator if ddl propagation is on. when
 	 * it is off we will never get here
 	 */
 	EnsureCoordinator();
 
+	/*
+	 * temporary swap the lists of objects to delete with the distributed objects and
+	 * deparse to an executable sql statement for the workers
+	 */
+	stmt->objects = distributedTypes;
+	dropStmtSql = deparse_drop_type_stmt(stmt);
+	stmt->objects = oldTypes;
+
 	/* to prevent recursion with mx we disable ddl propagation */
 	SendCommandToWorkersAsUser(ALL_WORKERS, DISABLE_DDL_PROPAGATION, NULL);
-	SendCommandToWorkersAsUser(ALL_WORKERS, queryString, NULL);
+	SendCommandToWorkersAsUser(ALL_WORKERS, dropStmtSql, NULL);
 
 	return NULL;
 }
@@ -133,6 +165,55 @@ PlanDropTypeStmt(DropStmt *stmt, const char *queryString)
 /********************************************************************************
  * Section with helper functions
  *********************************************************************************/
+
+
+/*
+ * FilterNameListForDistributedTypes takes a list of objects to delete, for Types this
+ * will be a list of TypeName. This list is filtered against the types that are
+ * distributed.
+ *
+ * The original list will not be touched, a new list will be created with only the objects
+ * in there.
+ */
+static List *
+FilterNameListForDistributedTypes(List *objects)
+{
+	ListCell *objectCell = NULL;
+	List *result = NIL;
+	foreach(objectCell, objects)
+	{
+		TypeName *typeName = castNode(TypeName, lfirst(objectCell));
+		Oid typeOid = LookupTypeNameOid(NULL, typeName, false);
+		if (type_is_distributed(typeOid))
+		{
+			result = lappend(result, typeName);
+		}
+	}
+	return result;
+}
+
+
+/*
+ * type_is_distributed checks if a given type (based on its oid) is a distributed type.
+ */
+static bool
+type_is_distributed(Oid typid)
+{
+	/* TODO keep track explicitly of distributed types and check here */
+	switch (get_typtype(typid))
+	{
+		case TYPTYPE_COMPOSITE:
+		case TYPTYPE_ENUM:
+		{
+			return true;
+		}
+
+		default:
+		{
+			return false;
+		}
+	}
+}
 
 
 /*
@@ -181,6 +262,58 @@ deparse_create_enum_stmt(CreateEnumStmt *stmt)
 	appendCreateEnumStmt(&sql, stmt);
 
 	return sql.data;
+}
+
+
+static const char *
+deparse_drop_type_stmt(DropStmt *stmt)
+{
+	Assert(stmt->removeType == OBJECT_TYPE);
+	StringInfoData str;
+	initStringInfo(&str);
+
+	appendDropTypeStmt(&str, stmt);
+
+	return str.data;
+}
+
+
+static void
+appendDropTypeStmt(StringInfo buf, DropStmt *stmt)
+{
+	/*
+	 * already tested at call site, but for future it might be collapsed in a
+	 * deparse_drop_stmt so be safe and check again
+	 */
+	Assert(stmt->removeType == OBJECT_TYPE);
+
+	appendStringInfo(buf, "DROP TYPE ");
+	appendObjectList(buf, stmt->objects);
+	if (stmt->behavior == DROP_CASCADE)
+	{
+		appendStringInfoString(buf, " CASCADE");
+	}
+	appendStringInfoString(buf, ";");
+}
+
+
+static void
+appendObjectList(StringInfo buf, List *objects)
+{
+	ListCell *objectCell = NULL;
+	foreach(objectCell, objects)
+	{
+		TypeName *typeName = castNode(TypeName, lfirst(objectCell));
+		Oid typeOid = LookupTypeNameOid(NULL, typeName, false);
+		const char *identifier = format_type_be_qualified(typeOid);
+
+		if (objectCell != list_head(objects))
+		{
+			appendStringInfo(buf, ", ");
+		}
+
+		appendStringInfoString(buf, identifier);
+	}
 }
 
 
@@ -264,11 +397,14 @@ appendColumnDef(StringInfo str, ColumnDef *columnDef)
 {
 	Oid typeOid = LookupTypeNameOid(NULL, columnDef->typeName, false);
 	Oid collationOid = GetColumnDefCollation(NULL, columnDef, typeOid);
+
+	Assert(!columnDef->is_not_null); /* not null is not supported on composite types */
+
 	appendStringInfo(str, "%s %s", columnDef->colname, format_type_be_qualified(typeOid));
 
 	if (OidIsValid(collationOid))
 	{
-		const char *collationName = get_collation_name(collationOid);
-		appendStringInfo(str, " COLLATE %s", quote_identifier(collationName));
+		const char *identifier = format_collate_be_qualified(collationOid);
+		appendStringInfo(str, " COLLATE %s", identifier);
 	}
 }

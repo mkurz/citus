@@ -22,6 +22,14 @@
 /* cluster.c - forward declarations */
 extern List * PlanClusterStmt(ClusterStmt *clusterStmt, const char *clusterCommand);
 
+/* collate.c - forward declarations */
+/* Control flags for format_collate_extended, compatible with format_type_extended */
+#define FORMAT_COLLATE_ALLOW_INVALID 0x02       /* allow invalid types */
+#define FORMAT_COLLATE_FORCE_QUALIFY 0x04       /* force qualification of collate */
+extern char * format_collate_be(Oid type_oid);
+extern char * format_collate_be_qualified(Oid type_oid);
+extern char * format_collate_extended(Oid collid, bits16 flags);
+
 
 /* extension.c - forward declarations */
 extern bool IsCitusExtensionStmt(Node *parsetree);
