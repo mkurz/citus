@@ -181,6 +181,52 @@ SendBareCommandListToWorkers(TargetWorkerSet targetWorkerSet, List *commandList)
 
 
 /*
+ * SendBareOptionalCommandListToWorkersAsUser sends a list of commands to a set of target
+ * workers in serial. Commands are committed immediately: new connections are
+ * always used and no transaction block is used (hence "bare").
+ */
+int
+SendBareOptionalCommandListToWorkersAsUser(TargetWorkerSet targetWorkerSet,
+										   List *commandList, const char *user)
+{
+	List *workerNodeList = TargetWorkerSetNodeList(targetWorkerSet);
+	ListCell *workerNodeCell = NULL;
+	ListCell *commandCell = NULL;
+	int maxError = RESPONSE_OKAY;
+
+	/* run commands serially */
+	foreach(workerNodeCell, workerNodeList)
+	{
+		MultiConnection *workerConnection = NULL;
+		WorkerNode *workerNode = (WorkerNode *) lfirst(workerNodeCell);
+		char *nodeName = workerNode->workerName;
+		int nodePort = workerNode->workerPort;
+		int connectionFlags = FORCE_NEW_CONNECTION;
+
+		workerConnection = GetNodeUserDatabaseConnection(connectionFlags, nodeName,
+														 nodePort, user, NULL);
+
+		/* iterate over the commands and execute them in the same connection */
+		foreach(commandCell, commandList)
+		{
+			char *commandString = lfirst(commandCell);
+			int result = ExecuteOptionalRemoteCommand(workerConnection, commandString,
+													  NULL);
+			if (result != RESPONSE_OKAY)
+			{
+				maxError = Max(maxError, result);
+				break;
+			}
+		}
+
+		CloseConnection(workerConnection);
+	}
+
+	return maxError;
+}
+
+
+/*
  * SendCommandToWorkersParams sends a command to all workers in parallel.
  * Commands are committed on the workers when the local transaction commits. The
  * connection are made as the extension owner to ensure write access to the Citus

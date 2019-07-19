@@ -30,6 +30,7 @@
 
 #include "distributed/commands.h"
 #include "distributed/metadata_sync.h"
+#include "distributed/remote_commands.h"
 #include "distributed/transaction_management.h"
 #include "distributed/worker_manager.h"
 #include "distributed/worker_transaction.h"
@@ -170,9 +171,28 @@ PlanAlterEnumStmt(AlterEnumStmt *stmt, const char *queryString)
 		 * might already be added to some nodes, but not all.
 		 */
 
-		/* TODO implement dispatch outside of transaction block */
-		SendCommandToWorkersAsUser(ALL_WORKERS, DISABLE_DDL_PROPAGATION, NULL);
-		SendCommandToWorkersAsUser(ALL_WORKERS, alterEnumStmtSql, NULL);
+		/* TODO function name is unwieldly long, and runs serially which is not nice */
+		List *commands = list_make2(DISABLE_DDL_PROPAGATION, (void *) alterEnumStmtSql);
+		int result =
+			SendBareOptionalCommandListToWorkersAsUser(ALL_WORKERS, commands, NULL);
+
+		if (result != RESPONSE_OKAY)
+		{
+			const char *alterEnumStmtIfNotExistsSql = NULL;
+			bool oldSkipIfNewValueExists = stmt->skipIfNewValExists;
+
+			/* deparse the query with IF NOT EXISTS */
+			stmt->skipIfNewValExists = true;
+			alterEnumStmtIfNotExistsSql = deparse_alter_enum_stmt(stmt);
+			stmt->skipIfNewValExists = oldSkipIfNewValueExists;
+
+			ereport(WARNING, (errmsg("not all workers applied change to enum"),
+							  errdetail("one or more workers might not have applied the "
+										"change due to communitcation issues. After the "
+										"communication issues have been resolved retry "
+										"the change with the following command: %s",
+										alterEnumStmtIfNotExistsSql)));
+		}
 	}
 	else
 	{
@@ -387,7 +407,7 @@ appendAlterEnumStmt(StringInfo buf, AlterEnumStmt *stmt)
 		{
 			appendStringInfo(buf, " %s %s",
 							 stmt->newValIsAfter ? "AFTER" : "BEFORE",
-							 stmt->newValNeighbor);
+							 quote_literal_cstr(stmt->newValNeighbor));
 		}
 
 		appendStringInfoString(buf, ";");
