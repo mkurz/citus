@@ -14,10 +14,10 @@
 #include "postgres.h"
 
 #include "access/htup_details.h"
-#include "server/catalog/namespace.h"
-#include "server/catalog/pg_collation.h"
-#include "server/utils/builtins.h"
-#include "server/utils/lsyscache.h"
+#include "catalog/namespace.h"
+#include "catalog/pg_collation.h"
+#include "utils/builtins.h"
+#include "utils/lsyscache.h"
 #include "utils/syscache.h"
 
 #include "distributed/commands.h"
