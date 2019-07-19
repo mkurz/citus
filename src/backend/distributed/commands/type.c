@@ -34,11 +34,19 @@
 #include "distributed/worker_transaction.h"
 
 
-static const char * get_composite_type_stmt_sql(CompositeTypeStmt *stmt);
+/* forward declaration for helper functions*/
+static void makeRangeVarQualified(RangeVar *var);
+
+
+/* forward declaration for deparse functions */
+static const char * deparse_composite_type_stmt(CompositeTypeStmt *stmt);
 static void appendCompositeTypeStmt(StringInfo str, CompositeTypeStmt *stmt);
 static void appendColumnDef(StringInfo str, ColumnDef *columnDef);
 static void appendColumnDefList(StringInfo str, List *columnDefs);
-static void makeRangeVarQualified(RangeVar *var);
+
+static const char * deparse_create_enum_stmt(CreateEnumStmt *stmt);
+static void appendCreateEnumStmt(StringInfo str, CreateEnumStmt *stmt);
+static void appendStringList(StringInfo str, List *strings);
 
 
 List *
@@ -60,13 +68,12 @@ PlanCompositeTypeStmt(CompositeTypeStmt *stmt, const char *queryString)
 	EnsureSchemaExistsOnAllNodes(schemaId);
 
 	/* reconstruct creation statement in a portable fashion */
-	compositeTypeStmtSql = get_composite_type_stmt_sql(stmt);
+	compositeTypeStmtSql = deparse_composite_type_stmt(stmt);
 	ereport(LOG, (errmsg("deparsed composite type statement"),
 				  errdetail("sql: %s", compositeTypeStmtSql)));
 
 	/* to prevent recursion with mx we disable ddl propagation */
 	/* TODO, mx expects the extension owner to be used here, this requires an alter owner statement as well */
-
 	SendCommandToWorkersAsUser(ALL_WORKERS, DISABLE_DDL_PROPAGATION, NULL);
 	SendCommandToWorkersAsUser(ALL_WORKERS, compositeTypeStmtSql, NULL);
 
@@ -75,19 +82,34 @@ PlanCompositeTypeStmt(CompositeTypeStmt *stmt, const char *queryString)
 }
 
 
-/*
- * makeRangeVarQualified will fill in the schemaname in RangeVar if it is not already
- * present. The schema used will be the default schemaname for creation of new objects as
- * returned by RangeVarGetCreationNamespace.
- */
-static void
-makeRangeVarQualified(RangeVar *var)
+List *
+PlanCreateEnumStmt(CreateEnumStmt *stmt, const char *queryString)
 {
-	if (var->schemaname == NULL)
-	{
-		Oid creationSchema = RangeVarGetCreationNamespace(var);
-		var->schemaname = get_namespace_name(creationSchema);
-	}
+	Oid schemaId = InvalidOid;
+	char *objname = NULL;
+	const char *createEnumStmtSql = NULL;
+
+	/*
+	 * managing types can only be done on the coordinator if ddl propagation is on. when
+	 * it is off we will never get here
+	 */
+	EnsureCoordinator();
+
+	/* make sure the namespace used for the creation of the type exists on all workers */
+	schemaId = QualifiedNameGetCreationNamespace(stmt->typeName, &objname);
+	EnsureSchemaExistsOnAllNodes(schemaId);
+
+	/* reconstruct creation statement in a portable fashion */
+	createEnumStmtSql = deparse_create_enum_stmt(stmt);
+	ereport(LOG, (errmsg("deparsed enum type statement"),
+				  errdetail("sql: %s", createEnumStmtSql)));
+
+	/* to prevent recursion with mx we disable ddl propagation */
+	/* TODO, mx expects the extension owner to be used here, this requires an alter owner statement as well */
+	SendCommandToWorkersAsUser(ALL_WORKERS, DISABLE_DDL_PROPAGATION, NULL);
+	SendCommandToWorkersAsUser(ALL_WORKERS, createEnumStmtSql, NULL);
+
+	return NULL;
 }
 
 
@@ -108,34 +130,55 @@ PlanDropTypeStmt(DropStmt *stmt, const char *queryString)
 }
 
 
-List *
-PlanCreateEnumStmt(CreateEnumStmt *createEnumStmt, const char *queryString)
-{
-	/*
-	 * managing types can only be done on the coordinator if ddl propagation is on. when
-	 * it is off we will never get here
-	 */
-	EnsureCoordinator();
-
-	/* to prevent recursion with mx we disable ddl propagation */
-	SendCommandToWorkersAsUser(ALL_WORKERS, DISABLE_DDL_PROPAGATION, NULL);
-	SendCommandToWorkersAsUser(ALL_WORKERS, queryString, NULL);
-
-	return NULL;
-}
+/********************************************************************************
+ * Section with helper functions
+ *********************************************************************************/
 
 
 /*
- * get_composite_type_stmt_sql builds and returns a string representing the
+ * makeRangeVarQualified will fill in the schemaname in RangeVar if it is not already
+ * present. The schema used will be the default schemaname for creation of new objects as
+ * returned by RangeVarGetCreationNamespace.
+ */
+static void
+makeRangeVarQualified(RangeVar *var)
+{
+	if (var->schemaname == NULL)
+	{
+		Oid creationSchema = RangeVarGetCreationNamespace(var);
+		var->schemaname = get_namespace_name(creationSchema);
+	}
+}
+
+
+/********************************************************************************
+ * Section with deparse functions
+ *********************************************************************************/
+
+
+/*
+ * deparse_composite_type_stmt builds and returns a string representing the
  * CompositeTypeStmt for application on a remote server.
  */
 static const char *
-get_composite_type_stmt_sql(CompositeTypeStmt *stmt)
+deparse_composite_type_stmt(CompositeTypeStmt *stmt)
 {
 	StringInfoData sql = { 0 };
 	initStringInfo(&sql);
 
 	appendCompositeTypeStmt(&sql, stmt);
+
+	return sql.data;
+}
+
+
+static const char *
+deparse_create_enum_stmt(CreateEnumStmt *stmt)
+{
+	StringInfoData sql = { 0 };
+	initStringInfo(&sql);
+
+	appendCreateEnumStmt(&sql, stmt);
 
 	return sql.data;
 }
@@ -156,6 +199,43 @@ appendCompositeTypeStmt(StringInfo str, CompositeTypeStmt *stmt)
 }
 
 
+static void
+appendCreateEnumStmt(StringInfo str, CreateEnumStmt *stmt)
+{
+	RangeVar *typevar = NULL;
+	const char *identifier = NULL;
+
+	/* extract the name from the statement and make fully qualified as a rangevar */
+	typevar = makeRangeVarFromNameList(stmt->typeName);
+	makeRangeVarQualified(typevar);
+
+	/* create the identifier from the fully qualified rangevar */
+	identifier = quote_qualified_identifier(typevar->schemaname, typevar->relname);
+
+	appendStringInfo(str, "CREATE TYPE %s AS ENUM (", identifier);
+	appendStringList(str, stmt->vals);
+	appendStringInfo(str, ");");
+}
+
+
+static void
+appendStringList(StringInfo str, List *strings)
+{
+	ListCell *stringCell = NULL;
+	foreach(stringCell, strings)
+	{
+		const char *string = strVal(lfirst(stringCell));
+		if (stringCell != list_head(strings))
+		{
+			appendStringInfoString(str, ", ");
+		}
+
+		string = quote_literal_cstr(string);
+		appendStringInfoString(str, string);
+	}
+}
+
+
 /*
  * appendColumnDefList appends the definition of a list of ColumnDef items to the provided
  * buffer, adding separators as necessary.
@@ -168,7 +248,7 @@ appendColumnDefList(StringInfo str, List *columnDefs)
 	{
 		if (columnDefCell != list_head(columnDefs))
 		{
-			appendStringInfo(str, ", ");
+			appendStringInfoString(str, ", ");
 		}
 		appendColumnDef(str, castNode(ColumnDef, lfirst(columnDefCell)));
 	}
