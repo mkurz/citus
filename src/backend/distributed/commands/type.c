@@ -187,11 +187,9 @@ PlanAlterEnumStmt(AlterEnumStmt *stmt, const char *queryString)
 			stmt->skipIfNewValExists = oldSkipIfNewValueExists;
 
 			ereport(WARNING, (errmsg("not all workers applied change to enum"),
-							  errdetail("one or more workers might not have applied the "
-										"change due to communitcation issues. After the "
-										"communication issues have been resolved retry "
-										"the change with the following command: %s",
-										alterEnumStmtIfNotExistsSql)));
+							  errdetail("retry with: %s", alterEnumStmtIfNotExistsSql),
+							  errhint("make sure the coordinators can communicate with "
+									  "all workers")));
 		}
 	}
 	else
