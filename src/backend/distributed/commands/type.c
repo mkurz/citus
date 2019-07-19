@@ -23,6 +23,7 @@
 
 #include "catalog/namespace.h"
 #include "catalog/pg_type.h"
+#include "nodes/makefuncs.h"
 #include "parser/parse_type.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
@@ -32,6 +33,10 @@
 #include "distributed/transaction_management.h"
 #include "distributed/worker_manager.h"
 #include "distributed/worker_transaction.h"
+
+
+#define AlterEnumIsRename(stmt) (stmt->oldVal != NULL)
+#define AlterEnumIsAddValue(stmt) (stmt->oldVal == NULL)
 
 
 /* forward declaration for helper functions*/
@@ -53,6 +58,9 @@ static void appendStringList(StringInfo str, List *strings);
 static const char * deparse_drop_type_stmt(DropStmt *stmt);
 static void appendDropTypeStmt(StringInfo buf, DropStmt *stmt);
 static void appendObjectList(StringInfo buf, List *objects);
+
+static const char * deparse_alter_enum_stmt(AlterEnumStmt *stmt);
+static void appendAlterEnumStmt(StringInfo buf, AlterEnumStmt *stmt);
 
 
 List *
@@ -88,6 +96,19 @@ PlanCompositeTypeStmt(CompositeTypeStmt *stmt, const char *queryString)
 }
 
 
+/*
+ * PlanAlterTypeStmt is invoked for alter type statements for composite types (and possibly base types).
+ */
+List *
+PlanAlterTypeStmt(AlterTableStmt *stmt, const char *queryString)
+{
+	Assert(stmt->relkind == OBJECT_TYPE);
+
+
+	return NULL;
+}
+
+
 List *
 PlanCreateEnumStmt(CreateEnumStmt *stmt, const char *queryString)
 {
@@ -116,6 +137,52 @@ PlanCreateEnumStmt(CreateEnumStmt *stmt, const char *queryString)
 	SendCommandToWorkersAsUser(ALL_WORKERS, createEnumStmtSql, NULL);
 
 	return NULL;
+}
+
+
+/*
+ * PlanAlterEnumStmt handles ALTER TYPE ... ADD VALUE for enum based types.
+ */
+List *
+PlanAlterEnumStmt(AlterEnumStmt *stmt, const char *queryString)
+{
+	TypeName *typeName = makeTypeNameFromNameList(stmt->typeName);
+	Oid typeOid = LookupTypeNameOid(NULL, typeName, false);
+	const char *alterEnumStmtSql = NULL;
+	if (!type_is_distributed(typeOid))
+	{
+		return NIL;
+	}
+
+	/*
+	 * managing types can only be done on the coordinator if ddl propagation is on. when
+	 * it is off we will never get here
+	 */
+	EnsureCoordinator();
+
+	alterEnumStmtSql = deparse_alter_enum_stmt(stmt);
+	if (AlterEnumIsAddValue(stmt))
+	{
+		/*
+		 * ADD VALUE can't be executed in a transaction, we will execute optimistically
+		 * and on an error we will advise to fix the issue with the worker and rerun the
+		 * query with the IF NOT EXTISTS modifier. The modifier is needed as the value
+		 * might already be added to some nodes, but not all.
+		 */
+
+		/* TODO implement dispatch outside of transaction block */
+		SendCommandToWorkersAsUser(ALL_WORKERS, DISABLE_DDL_PROPAGATION, NULL);
+		SendCommandToWorkersAsUser(ALL_WORKERS, alterEnumStmtSql, NULL);
+	}
+	else
+	{
+		/* other statements can be run in a transaction and will be dispatched here. */
+		/* TODO, mx expects the extension owner to be used here, this requires an alter owner statement as well */
+		SendCommandToWorkersAsUser(ALL_WORKERS, DISABLE_DDL_PROPAGATION, NULL);
+		SendCommandToWorkersAsUser(ALL_WORKERS, alterEnumStmtSql, NULL);
+	}
+
+	return NIL;
 }
 
 
@@ -266,6 +333,18 @@ deparse_create_enum_stmt(CreateEnumStmt *stmt)
 
 
 static const char *
+deparse_alter_enum_stmt(AlterEnumStmt *stmt)
+{
+	StringInfoData sql = { 0 };
+	initStringInfo(&sql);
+
+	appendAlterEnumStmt(&sql, stmt);
+
+	return sql.data;
+}
+
+
+static const char *
 deparse_drop_type_stmt(DropStmt *stmt)
 {
 	Assert(stmt->removeType == OBJECT_TYPE);
@@ -275,6 +354,44 @@ deparse_drop_type_stmt(DropStmt *stmt)
 	appendDropTypeStmt(&str, stmt);
 
 	return str.data;
+}
+
+
+static void
+appendAlterEnumStmt(StringInfo buf, AlterEnumStmt *stmt)
+{
+	TypeName *typeName = makeTypeNameFromNameList(stmt->typeName);
+	Oid typeOid = LookupTypeNameOid(NULL, typeName, false);
+	const char *identifier = format_type_be_qualified(typeOid);
+
+	appendStringInfo(buf, "ALTER TYPE %s", identifier);
+
+	if (AlterEnumIsRename(stmt))
+	{
+		/* Rename an existing label */
+		appendStringInfo(buf, " RENAME VALUE %s TO %s;",
+						 quote_literal_cstr(stmt->oldVal),
+						 quote_literal_cstr(stmt->newVal));
+	}
+	else if (AlterEnumIsAddValue(stmt))
+	{
+		/* Add a new label */
+		appendStringInfoString(buf, " ADD VALUE ");
+		if (stmt->skipIfNewValExists)
+		{
+			appendStringInfoString(buf, "IF NOT EXISTS ");
+		}
+		appendStringInfoString(buf, quote_literal_cstr(stmt->newVal));
+
+		if (stmt->newValNeighbor)
+		{
+			appendStringInfo(buf, " %s %s",
+							 stmt->newValIsAfter ? "AFTER" : "BEFORE",
+							 stmt->newValNeighbor);
+		}
+
+		appendStringInfoString(buf, ";");
+	}
 }
 
 

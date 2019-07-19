@@ -332,6 +332,12 @@ multi_ProcessUtility(PlannedStmt *pstmt,
 			ddlJobs = PlanCreateEnumStmt(createEnumStmt, queryString);
 		}
 
+		if (IsA(parsetree, AlterEnumStmt))
+		{
+			AlterEnumStmt *alterEnumStmt = (AlterEnumStmt *) parsetree;
+			ddlJobs = PlanAlterEnumStmt(alterEnumStmt, queryString);
+		}
+
 		if (IsA(parsetree, AlterTableStmt))
 		{
 			AlterTableStmt *alterTableStmt = (AlterTableStmt *) parsetree;
@@ -340,6 +346,11 @@ multi_ProcessUtility(PlannedStmt *pstmt,
 				alterTableStmt->relkind == OBJECT_INDEX)
 			{
 				ddlJobs = PlanAlterTableStmt(alterTableStmt, queryString);
+			}
+
+			if (alterTableStmt->relkind == OBJECT_TYPE)
+			{
+				ddlJobs = PlanAlterTypeStmt(alterTableStmt, queryString);
 			}
 		}
 

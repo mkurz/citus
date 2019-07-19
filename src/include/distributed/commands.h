@@ -129,8 +129,10 @@ extern void ProcessTruncateStatement(TruncateStmt *truncateStatement);
 
 /* type.c - forward declarations */
 extern List * PlanCompositeTypeStmt(CompositeTypeStmt *stmt, const char *queryString);
-extern List * PlanDropTypeStmt(DropStmt *stmt, const char *queryString);
+extern List * PlanAlterTypeStmt(AlterTableStmt *stmt, const char *queryString);
 extern List * PlanCreateEnumStmt(CreateEnumStmt *createEnumStmt, const char *queryString);
+extern List * PlanAlterEnumStmt(AlterEnumStmt *stmt, const char *queryString);
+extern List * PlanDropTypeStmt(DropStmt *stmt, const char *queryString);
 
 /* vacuum.c - froward declarations */
 extern void ProcessVacuumStmt(VacuumStmt *vacuumStmt, const char *vacuumCommand);
