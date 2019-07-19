@@ -365,9 +365,10 @@ deparse_alter_enum_stmt(AlterEnumStmt *stmt)
 static const char *
 deparse_drop_type_stmt(DropStmt *stmt)
 {
-	Assert(stmt->removeType == OBJECT_TYPE);
-	StringInfoData str;
+	StringInfoData str = { 0 };
 	initStringInfo(&str);
+
+	Assert(stmt->removeType == OBJECT_TYPE);
 
 	appendDropTypeStmt(&str, stmt);
 
