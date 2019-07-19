@@ -109,6 +109,38 @@ SendCommandToWorkersAsUser(TargetWorkerSet targetWorkerSet, const char *command,
 
 
 /*
+ * TargetWorkerSetNodeList returns a list of WorkerNode's that satisfies the
+ * TargetWorkerSet.
+ */
+List *
+TargetWorkerSetNodeList(TargetWorkerSet targetWorkerSet)
+{
+	List *workerNodeList = ActivePrimaryNodeList();
+	ListCell *workerNodeCell = NULL;
+	List *result = NIL;
+
+	foreach(workerNodeCell, workerNodeList)
+	{
+		WorkerNode *workerNode = (WorkerNode *) lfirst(workerNodeCell);
+		if (targetWorkerSet == WORKERS_WITH_METADATA &&
+			!workerNode->hasMetadata)
+		{
+			continue;
+		}
+		if (targetWorkerSet == OTHER_WORKERS &&
+			workerNode->groupId == GetLocalGroupId())
+		{
+			continue;
+		}
+
+		result = lappend(result, workerNode);
+	}
+
+	return result;
+}
+
+
+/*
  * SendBareCommandListToWorkers sends a list of commands to a set of target
  * workers in serial. Commands are committed immediately: new connections are
  * always used and no transaction block is used (hence "bare"). The connections
@@ -118,7 +150,7 @@ SendCommandToWorkersAsUser(TargetWorkerSet targetWorkerSet, const char *command,
 void
 SendBareCommandListToWorkers(TargetWorkerSet targetWorkerSet, List *commandList)
 {
-	List *workerNodeList = ActivePrimaryNodeList();
+	List *workerNodeList = TargetWorkerSetNodeList(targetWorkerSet);
 	ListCell *workerNodeCell = NULL;
 	char *nodeUser = CitusExtensionOwnerName();
 	ListCell *commandCell = NULL;
@@ -131,18 +163,6 @@ SendBareCommandListToWorkers(TargetWorkerSet targetWorkerSet, List *commandList)
 		char *nodeName = workerNode->workerName;
 		int nodePort = workerNode->workerPort;
 		int connectionFlags = FORCE_NEW_CONNECTION;
-
-		if (targetWorkerSet == WORKERS_WITH_METADATA &&
-			!workerNode->hasMetadata)
-		{
-			continue;
-		}
-
-		if (targetWorkerSet == OTHER_WORKERS &&
-			workerNode->groupId == GetLocalGroupId())
-		{
-			continue;
-		}
 
 		workerConnection = GetNodeUserDatabaseConnection(connectionFlags, nodeName,
 														 nodePort, nodeUser, NULL);
@@ -175,7 +195,7 @@ SendCommandToWorkersParams(TargetWorkerSet targetWorkerSet, const char *command,
 {
 	List *connectionList = NIL;
 	ListCell *connectionCell = NULL;
-	List *workerNodeList = ActivePrimaryNodeList();
+	List *workerNodeList = TargetWorkerSetNodeList(targetWorkerSet);
 	ListCell *workerNodeCell = NULL;
 
 	BeginOrContinueCoordinatedTransaction();
@@ -188,19 +208,7 @@ SendCommandToWorkersParams(TargetWorkerSet targetWorkerSet, const char *command,
 		char *nodeName = workerNode->workerName;
 		int nodePort = workerNode->workerPort;
 		MultiConnection *connection = NULL;
-		int connectionFlags = 0;
-
-		if (targetWorkerSet == WORKERS_WITH_METADATA &&
-			!workerNode->hasMetadata)
-		{
-			continue;
-		}
-
-		if (targetWorkerSet == OTHER_WORKERS &&
-			workerNode->groupId == GetLocalGroupId())
-		{
-			continue;
-		}
+		int32 connectionFlags = 0;
 
 		connection = StartNodeUserDatabaseConnection(connectionFlags, nodeName, nodePort,
 													 user, NULL);
