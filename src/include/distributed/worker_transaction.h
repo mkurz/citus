@@ -37,6 +37,9 @@ extern void SendCommandToWorkersAsUser(TargetWorkerSet targetWorkerSet,
 									   const char *command, const char *user);
 extern void SendBareCommandListToWorkers(TargetWorkerSet targetWorkerSet,
 										 List *commandList);
+extern int SendBareOptionalCommandListToWorkersAsUser(TargetWorkerSet targetWorkerSet,
+													  List *commandList,
+													  const char *user);
 extern void SendCommandToWorkersParams(TargetWorkerSet targetWorkerSet,
 									   const char *command, const char *user,
 									   int parameterCount, const Oid *parameterTypes,
