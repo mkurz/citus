@@ -58,7 +58,7 @@ static void appendStringList(StringInfo str, List *strings);
 
 static const char * deparse_drop_type_stmt(DropStmt *stmt);
 static void appendDropTypeStmt(StringInfo buf, DropStmt *stmt);
-static void appendObjectList(StringInfo buf, List *objects);
+static void appendTypeNameList(StringInfo buf, List *objects);
 
 static const char * deparse_alter_enum_stmt(AlterEnumStmt *stmt);
 static void appendAlterEnumStmt(StringInfo buf, AlterEnumStmt *stmt);
@@ -424,7 +424,7 @@ appendDropTypeStmt(StringInfo buf, DropStmt *stmt)
 	Assert(stmt->removeType == OBJECT_TYPE);
 
 	appendStringInfo(buf, "DROP TYPE ");
-	appendObjectList(buf, stmt->objects);
+	appendTypeNameList(buf, stmt->objects);
 	if (stmt->behavior == DROP_CASCADE)
 	{
 		appendStringInfoString(buf, " CASCADE");
@@ -434,7 +434,7 @@ appendDropTypeStmt(StringInfo buf, DropStmt *stmt)
 
 
 static void
-appendObjectList(StringInfo buf, List *objects)
+appendTypeNameList(StringInfo buf, List *objects)
 {
 	ListCell *objectCell = NULL;
 	foreach(objectCell, objects)
