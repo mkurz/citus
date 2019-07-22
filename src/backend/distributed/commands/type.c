@@ -277,6 +277,24 @@ PlanDropTypeStmt(DropStmt *stmt, const char *queryString)
 }
 
 
+bool
+CompositeTypeExists(CompositeTypeStmt *stmt)
+{
+	TypeName *typeName = makeTypeNameFromRangeVar(stmt->typevar);
+	Oid typeOid = LookupTypeNameOid(NULL, typeName, true);
+	return OidIsValid(typeOid);
+}
+
+
+bool
+EnumTypeExists(CreateEnumStmt *stmt)
+{
+	TypeName *typeName = makeTypeNameFromNameList(stmt->typeName);
+	Oid typeOid = LookupTypeNameOid(NULL, typeName, false);
+	return OidIsValid(typeOid);
+}
+
+
 /********************************************************************************
  * Section with helper functions
  *********************************************************************************/
