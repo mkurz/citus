@@ -44,6 +44,7 @@
 static void makeRangeVarQualified(RangeVar *var);
 static List * FilterNameListForDistributedTypes(List *objects);
 static bool type_is_distributed(Oid typid);
+static TypeName * makeTypeNameFromRangeVar(const RangeVar *relation);
 
 
 /* forward declaration for deparse functions */
@@ -62,6 +63,11 @@ static void appendTypeNameList(StringInfo buf, List *objects);
 
 static const char * deparse_alter_enum_stmt(AlterEnumStmt *stmt);
 static void appendAlterEnumStmt(StringInfo buf, AlterEnumStmt *stmt);
+
+static const char * deparse_alter_type_stmt(AlterTableStmt *stmt);
+static void appendAlterTypeStmt(StringInfo buf, AlterTableStmt *stmt);
+static void appendAlterTypeCmd(StringInfo buf, AlterTableCmd *alterTableCmd);
+static void appendAlterTypeCmdAddColumn(StringInfo buf, AlterTableCmd *alterTableCmd);
 
 
 List *
@@ -84,8 +90,8 @@ PlanCompositeTypeStmt(CompositeTypeStmt *stmt, const char *queryString)
 
 	/* reconstruct creation statement in a portable fashion */
 	compositeTypeStmtSql = deparse_composite_type_stmt(stmt);
-	ereport(LOG, (errmsg("deparsed composite type statement"),
-				  errdetail("sql: %s", compositeTypeStmtSql)));
+	ereport(DEBUG3, (errmsg("deparsed composite type statement"),
+					 errdetail("sql: %s", compositeTypeStmtSql)));
 
 	/* to prevent recursion with mx we disable ddl propagation */
 	/* TODO, mx expects the extension owner to be used here, this requires an alter owner statement as well */
@@ -103,8 +109,29 @@ PlanCompositeTypeStmt(CompositeTypeStmt *stmt, const char *queryString)
 List *
 PlanAlterTypeStmt(AlterTableStmt *stmt, const char *queryString)
 {
+	const char *alterTypeStmtSql = NULL;
+	TypeName *typeName = NULL;
+
 	Assert(stmt->relkind == OBJECT_TYPE);
 
+	/* check if type is distributed before we run the coordinator check */
+	typeName = makeTypeNameFromRangeVar(stmt->relation);
+	Oid typeOid = LookupTypeNameOid(NULL, typeName, false);
+	if (!type_is_distributed(typeOid))
+	{
+		return NIL;
+	}
+
+	EnsureCoordinator();
+
+	/* reconstruct alter statement in a portable fashion */
+	alterTypeStmtSql = deparse_alter_type_stmt(stmt);
+	ereport(DEBUG3, (errmsg("deparsed alter type statement"),
+					 errdetail("sql: %s", alterTypeStmtSql)));
+
+	/* TODO, mx expects the extension owner to be used here, this requires an alter owner statement as well */
+	SendCommandToWorkersAsUser(ALL_WORKERS, DISABLE_DDL_PROPAGATION, NULL);
+	SendCommandToWorkersAsUser(ALL_WORKERS, alterTypeStmtSql, NULL);
 
 	return NULL;
 }
@@ -129,8 +156,8 @@ PlanCreateEnumStmt(CreateEnumStmt *stmt, const char *queryString)
 
 	/* reconstruct creation statement in a portable fashion */
 	createEnumStmtSql = deparse_create_enum_stmt(stmt);
-	ereport(LOG, (errmsg("deparsed enum type statement"),
-				  errdetail("sql: %s", createEnumStmtSql)));
+	ereport(DEBUG3, (errmsg("deparsed enum type statement"),
+					 errdetail("sql: %s", createEnumStmtSql)));
 
 	/* to prevent recursion with mx we disable ddl propagation */
 	/* TODO, mx expects the extension owner to be used here, this requires an alter owner statement as well */
@@ -317,6 +344,20 @@ makeRangeVarQualified(RangeVar *var)
 }
 
 
+static TypeName *
+makeTypeNameFromRangeVar(const RangeVar *relation)
+{
+	List *names = NIL;
+	if (relation->schemaname)
+	{
+		names = lappend(names, makeString(relation->schemaname));
+	}
+	names = lappend(names, makeString(relation->relname));
+
+	return makeTypeNameFromNameList(names);
+}
+
+
 /********************************************************************************
  * Section with deparse functions
  *********************************************************************************/
@@ -373,6 +414,71 @@ deparse_drop_type_stmt(DropStmt *stmt)
 	appendDropTypeStmt(&str, stmt);
 
 	return str.data;
+}
+
+
+static const char *
+deparse_alter_type_stmt(AlterTableStmt *stmt)
+{
+	StringInfoData str = { 0 };
+	initStringInfo(&str);
+
+	Assert(stmt->relkind == OBJECT_TYPE);
+
+	appendAlterTypeStmt(&str, stmt);
+
+	return str.data;
+}
+
+
+static void
+appendAlterTypeStmt(StringInfo buf, AlterTableStmt *stmt)
+{
+	TypeName *typeName = makeTypeNameFromRangeVar(stmt->relation);
+	Oid typeOid = LookupTypeNameOid(NULL, typeName, false);
+	const char *identifier = format_type_be_qualified(typeOid);
+	ListCell *cmdCell = NULL;
+
+	Assert(stmt->relkind = OBJECT_TYPE);
+
+	appendStringInfo(buf, "ALTER TYPE %s", identifier);
+	foreach(cmdCell, stmt->cmds)
+	{
+		AlterTableCmd *alterTableCmd = castNode(AlterTableCmd, lfirst(cmdCell));
+		appendAlterTypeCmd(buf, alterTableCmd);
+	}
+
+	appendStringInfoString(buf, ";");
+}
+
+
+static void
+appendAlterTypeCmd(StringInfo buf, AlterTableCmd *alterTableCmd)
+{
+	switch (alterTableCmd->subtype)
+	{
+		case AT_AddColumn:
+		{
+			appendAlterTypeCmdAddColumn(buf, alterTableCmd);
+			break;
+		}
+
+		default:
+		{
+			ereport(ERROR, (errmsg("unsupported subtype for alter table command"),
+							errdetail("sub command type: %d", alterTableCmd->subtype)));
+		}
+	}
+}
+
+
+static void
+appendAlterTypeCmdAddColumn(StringInfo buf, AlterTableCmd *alterTableCmd)
+{
+	Assert(alterTableCmd->subtype == AT_AddColumn);
+
+	appendStringInfoString(buf, " ADD ATTRIBUTE ");
+	appendColumnDef(buf, castNode(ColumnDef, alterTableCmd->def));
 }
 
 
