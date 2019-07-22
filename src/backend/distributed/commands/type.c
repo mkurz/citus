@@ -68,6 +68,9 @@ static const char * deparse_alter_type_stmt(AlterTableStmt *stmt);
 static void appendAlterTypeStmt(StringInfo buf, AlterTableStmt *stmt);
 static void appendAlterTypeCmd(StringInfo buf, AlterTableCmd *alterTableCmd);
 static void appendAlterTypeCmdAddColumn(StringInfo buf, AlterTableCmd *alterTableCmd);
+static void appendAlterTypeCmdDropColumn(StringInfo buf, AlterTableCmd *alterTableCmd);
+static void appendAlterTypeCmdAlterColumnType(StringInfo buf,
+											  AlterTableCmd *alterTableCmd);
 
 
 List *
@@ -444,7 +447,14 @@ appendAlterTypeStmt(StringInfo buf, AlterTableStmt *stmt)
 	appendStringInfo(buf, "ALTER TYPE %s", identifier);
 	foreach(cmdCell, stmt->cmds)
 	{
-		AlterTableCmd *alterTableCmd = castNode(AlterTableCmd, lfirst(cmdCell));
+		AlterTableCmd *alterTableCmd = NULL;
+
+		if (cmdCell != list_head(stmt->cmds))
+		{
+			appendStringInfoString(buf, ", ");
+		}
+
+		alterTableCmd = castNode(AlterTableCmd, lfirst(cmdCell));
 		appendAlterTypeCmd(buf, alterTableCmd);
 	}
 
@@ -460,6 +470,18 @@ appendAlterTypeCmd(StringInfo buf, AlterTableCmd *alterTableCmd)
 		case AT_AddColumn:
 		{
 			appendAlterTypeCmdAddColumn(buf, alterTableCmd);
+			break;
+		}
+
+		case AT_DropColumn:
+		{
+			appendAlterTypeCmdDropColumn(buf, alterTableCmd);
+			break;
+		}
+
+		case AT_AlterColumnType:
+		{
+			appendAlterTypeCmdAlterColumnType(buf, alterTableCmd);
 			break;
 		}
 
@@ -479,6 +501,34 @@ appendAlterTypeCmdAddColumn(StringInfo buf, AlterTableCmd *alterTableCmd)
 
 	appendStringInfoString(buf, " ADD ATTRIBUTE ");
 	appendColumnDef(buf, castNode(ColumnDef, alterTableCmd->def));
+}
+
+
+static void
+appendAlterTypeCmdDropColumn(StringInfo buf, AlterTableCmd *alterTableCmd)
+{
+	Assert(alterTableCmd->subtype == AT_DropColumn);
+	appendStringInfo(buf, " DROP ATTRIBUTE %s", quote_identifier(alterTableCmd->name));
+
+	if (alterTableCmd->behavior == DROP_CASCADE)
+	{
+		appendStringInfoString(buf, " CASCADE");
+	}
+}
+
+
+static void
+appendAlterTypeCmdAlterColumnType(StringInfo buf, AlterTableCmd *alterTableCmd)
+{
+	Assert(alterTableCmd->subtype == AT_AlterColumnType);
+	appendStringInfo(buf, " ALTER ATTRIBUTE %s SET DATA TYPE ", quote_identifier(
+						 alterTableCmd->name));
+	appendColumnDef(buf, castNode(ColumnDef, alterTableCmd->def));
+
+	if (alterTableCmd->behavior == DROP_CASCADE)
+	{
+		appendStringInfoString(buf, " CASCADE");
+	}
 }
 
 
@@ -631,8 +681,11 @@ appendColumnDefList(StringInfo str, List *columnDefs)
 
 
 /*
- * appendColumnDef appends the definition of one ColumnDef completely qualifiedto the
+ * appendColumnDef appends the definition of one ColumnDef completely qualified to the
  * provided buffer.
+ *
+ * If the colname is not set that part is ommitted. This is the case in alter column type
+ * statements.
  */
 static void
 appendColumnDef(StringInfo str, ColumnDef *columnDef)
@@ -642,7 +695,12 @@ appendColumnDef(StringInfo str, ColumnDef *columnDef)
 
 	Assert(!columnDef->is_not_null); /* not null is not supported on composite types */
 
-	appendStringInfo(str, "%s %s", columnDef->colname, format_type_be_qualified(typeOid));
+	if (columnDef->colname)
+	{
+		appendStringInfo(str, "%s ", columnDef->colname);
+	}
+
+	appendStringInfo(str, "%s", format_type_be_qualified(typeOid));
 
 	if (OidIsValid(collationOid))
 	{
