@@ -133,8 +133,15 @@ extern List * PlanAlterTypeStmt(AlterTableStmt *stmt, const char *queryString);
 extern List * PlanCreateEnumStmt(CreateEnumStmt *createEnumStmt, const char *queryString);
 extern List * PlanAlterEnumStmt(AlterEnumStmt *stmt, const char *queryString);
 extern List * PlanDropTypeStmt(DropStmt *stmt, const char *queryString);
+extern Node * RecreateTypeStatement(Oid typeOid);
 extern bool CompositeTypeExists(CompositeTypeStmt *stmt);
 extern bool EnumTypeExists(CreateEnumStmt *stmt);
+
+extern const char * deparse_composite_type_stmt(CompositeTypeStmt *stmt);
+extern const char * deparse_create_enum_stmt(CreateEnumStmt *stmt);
+extern const char * deparse_drop_type_stmt(DropStmt *stmt);
+extern const char * deparse_alter_enum_stmt(AlterEnumStmt *stmt);
+extern const char * deparse_alter_type_stmt(AlterTableStmt *stmt);
 
 /* vacuum.c - froward declarations */
 extern void ProcessVacuumStmt(VacuumStmt *vacuumStmt, const char *vacuumCommand);

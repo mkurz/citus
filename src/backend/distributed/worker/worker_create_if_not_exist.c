@@ -18,16 +18,20 @@
 #include "postgres.h"
 
 #include "fmgr.h"
+#include "nodes/makefuncs.h"
 #include "nodes/nodes.h"
+#include "parser/parse_type.h"
 #include "tcop/dest.h"
 #include "tcop/utility.h"
 #include "utils/builtins.h"
+#include "utils/regproc.h"
 
 #include "distributed/commands.h"
 #include "distributed/commands/utility_hook.h"
 #include "distributed/worker_protocol.h"
 
 PG_FUNCTION_INFO_V1(worker_create_if_not_exists);
+PG_FUNCTION_INFO_V1(type_recreate_command);
 
 /*
  * worker_create_if_not_exists(sqlStatement text)
@@ -71,6 +75,10 @@ worker_create_if_not_exists(PG_FUNCTION_ARGS)
 
 		default:
 		{
+			/*
+			 * should not be reached, indicates the coordinator is sending unsupported
+			 * statements
+			 */
 			ereport(ERROR, (errmsg("unsupported create statement for "
 								   "worker_create_if_not_exists")));
 			return BoolGetDatum(false);
@@ -82,4 +90,45 @@ worker_create_if_not_exists(PG_FUNCTION_ARGS)
 
 	/* type has been created */
 	return BoolGetDatum(true);
+}
+
+
+/*
+ * type_recreate_command(typename text) text
+ */
+Datum
+type_recreate_command(PG_FUNCTION_ARGS)
+{
+	text *typeNameText = PG_GETARG_TEXT_P(0);
+	const char *typeNameStr = text_to_cstring(typeNameText);
+	List *typeNameList = stringToQualifiedNameList(typeNameStr);
+	TypeName *typeName = makeTypeNameFromNameList(typeNameList);
+	Oid typeOid = LookupTypeNameOid(NULL, typeName, false);
+
+	Node *stmt = RecreateTypeStatement(typeOid);
+
+	switch (stmt->type)
+	{
+		case T_CreateEnumStmt:
+		{
+			const char *createEnumStmtSql = NULL;
+			createEnumStmtSql = deparse_create_enum_stmt(castNode(CreateEnumStmt, stmt));
+			return CStringGetTextDatum(createEnumStmtSql);
+		}
+
+		case T_CompositeTypeStmt:
+		{
+			const char *compositeTypeStmtSql = NULL;
+			compositeTypeStmtSql = deparse_composite_type_stmt(castNode(CompositeTypeStmt,
+																		stmt));
+			return CStringGetTextDatum(compositeTypeStmtSql);
+		}
+
+		default:
+		{
+			ereport(ERROR, (errmsg("unsupported statement for deparse")));
+		}
+	}
+
+	PG_RETURN_VOID();
 }

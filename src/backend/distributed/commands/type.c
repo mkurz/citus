@@ -21,12 +21,17 @@
 
 #include "postgres.h"
 
+#include "access/htup_details.h"
 #include "catalog/namespace.h"
+#include "catalog/pg_enum.h"
 #include "catalog/pg_type.h"
 #include "nodes/makefuncs.h"
 #include "parser/parse_type.h"
 #include "utils/builtins.h"
+#include "utils/fmgroids.h"
 #include "utils/lsyscache.h"
+#include "utils/regproc.h"
+#include "utils/typcache.h"
 
 #include "distributed/commands.h"
 #include "distributed/metadata_sync.h"
@@ -47,31 +52,31 @@ static bool type_is_distributed(Oid typid);
 static TypeName * makeTypeNameFromRangeVar(const RangeVar *relation);
 
 
+/* recreate functions */
+static CompositeTypeStmt * RecreateCompositeTypeStmt(Oid typeOid);
+static List * composite_type_coldeflist(Oid typeOid);
+static CreateEnumStmt * RecreateEnumStmt(Oid typeOid);
+static List * enum_vals_list(Oid typeOid);
+
 /* forward declaration for deparse functions */
-static const char * deparse_composite_type_stmt(CompositeTypeStmt *stmt);
 static void appendCompositeTypeStmt(StringInfo str, CompositeTypeStmt *stmt);
 static void appendColumnDef(StringInfo str, ColumnDef *columnDef);
 static void appendColumnDefList(StringInfo str, List *columnDefs);
 
-static const char * deparse_create_enum_stmt(CreateEnumStmt *stmt);
 static void appendCreateEnumStmt(StringInfo str, CreateEnumStmt *stmt);
 static void appendStringList(StringInfo str, List *strings);
 
-static const char * deparse_drop_type_stmt(DropStmt *stmt);
 static void appendDropTypeStmt(StringInfo buf, DropStmt *stmt);
 static void appendTypeNameList(StringInfo buf, List *objects);
 
-static const char * deparse_alter_enum_stmt(AlterEnumStmt *stmt);
 static void appendAlterEnumStmt(StringInfo buf, AlterEnumStmt *stmt);
 
-static const char * deparse_alter_type_stmt(AlterTableStmt *stmt);
 static void appendAlterTypeStmt(StringInfo buf, AlterTableStmt *stmt);
 static void appendAlterTypeCmd(StringInfo buf, AlterTableCmd *alterTableCmd);
 static void appendAlterTypeCmdAddColumn(StringInfo buf, AlterTableCmd *alterTableCmd);
 static void appendAlterTypeCmdDropColumn(StringInfo buf, AlterTableCmd *alterTableCmd);
 static void appendAlterTypeCmdAlterColumnType(StringInfo buf,
 											  AlterTableCmd *alterTableCmd);
-
 
 List *
 PlanCompositeTypeStmt(CompositeTypeStmt *stmt, const char *queryString)
@@ -277,6 +282,138 @@ PlanDropTypeStmt(DropStmt *stmt, const char *queryString)
 }
 
 
+Node *
+RecreateTypeStatement(Oid typeOid)
+{
+	switch (get_typtype(typeOid))
+	{
+		case TYPTYPE_ENUM:
+		{
+			return (Node *) RecreateEnumStmt(typeOid);
+		}
+
+		case TYPTYPE_COMPOSITE:
+		{
+			return (Node *) RecreateCompositeTypeStmt(typeOid);
+		}
+
+		default:
+		{
+			ereport(ERROR, (errmsg("unsupported type to generate create statement for"),
+							errdetail("only enum and composite types can be recreated")));
+		}
+	}
+}
+
+
+static CompositeTypeStmt *
+RecreateCompositeTypeStmt(Oid typeOid)
+{
+	CompositeTypeStmt *stmt = NULL;
+
+	Assert(get_typtype(typeOid) == TYPTYPE_COMPOSITE);
+
+	stmt = makeNode(CompositeTypeStmt);
+	List *names = stringToQualifiedNameList(format_type_be_qualified(typeOid));
+	stmt->typevar = makeRangeVarFromNameList(names);
+	stmt->coldeflist = composite_type_coldeflist(typeOid);
+
+	return stmt;
+}
+
+
+static ColumnDef *
+attributeFormToColumnDef(Form_pg_attribute attributeForm)
+{
+	return makeColumnDef(NameStr(attributeForm->attname),
+						 attributeForm->atttypid,
+						 -1,
+						 attributeForm->attcollation);
+}
+
+
+static List *
+composite_type_coldeflist(Oid typeOid)
+{
+	Relation relation = NULL;
+	Oid relationId = InvalidOid;
+	TupleDesc tupleDescriptor = NULL;
+	int attributeIndex = 0;
+	List *columnDefs = NIL;
+
+	relationId = typeidTypeRelid(typeOid);
+	relation = relation_open(relationId, AccessShareLock);
+
+	tupleDescriptor = RelationGetDescr(relation);
+	for (attributeIndex = 0; attributeIndex < tupleDescriptor->natts; attributeIndex++)
+	{
+		Form_pg_attribute attributeForm = TupleDescAttr(tupleDescriptor, attributeIndex);
+
+		if (attributeForm->attisdropped)
+		{
+			/* skip logically hidden attributes */
+			continue;
+		}
+
+		columnDefs = lappend(columnDefs, attributeFormToColumnDef(attributeForm));
+	}
+
+	relation_close(relation, AccessShareLock);
+
+	return columnDefs;
+}
+
+
+static CreateEnumStmt *
+RecreateEnumStmt(Oid typeOid)
+{
+	CreateEnumStmt *stmt = NULL;
+
+	Assert(get_typtype(typeOid) == TYPTYPE_ENUM);
+
+	stmt = makeNode(CreateEnumStmt);
+	stmt->typeName = stringToQualifiedNameList(format_type_be_qualified(typeOid));
+	stmt->vals = enum_vals_list(typeOid);
+
+	return stmt;
+}
+
+
+static List *
+enum_vals_list(Oid typeOid)
+{
+	Relation enum_rel = NULL;
+	SysScanDesc enum_scan = NULL;
+	HeapTuple enum_tuple = NULL;
+	ScanKeyData skey = { 0 };
+
+	List *vals = NIL;
+
+	/* Scan pg_enum for the members of the target enum type. */
+	ScanKeyInit(&skey,
+				Anum_pg_enum_enumtypid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(typeOid));
+
+	enum_rel = heap_open(EnumRelationId, AccessShareLock);
+	enum_scan = systable_beginscan(enum_rel,
+								   EnumTypIdLabelIndexId,
+								   true, NULL,
+								   1, &skey);
+
+	/* collect all value names in CREATE TYPE ... AS ENUM stmt */
+	while (HeapTupleIsValid(enum_tuple = systable_getnext(enum_scan)))
+	{
+		Form_pg_enum en = (Form_pg_enum) GETSTRUCT(enum_tuple);
+		vals = lappend(vals, makeString(pstrdup(NameStr(en->enumlabel))));
+	}
+
+	systable_endscan(enum_scan);
+	heap_close(enum_rel, AccessShareLock);
+	return vals;
+}
+
+
 bool
 CompositeTypeExists(CompositeTypeStmt *stmt)
 {
@@ -388,7 +525,7 @@ makeTypeNameFromRangeVar(const RangeVar *relation)
  * deparse_composite_type_stmt builds and returns a string representing the
  * CompositeTypeStmt for application on a remote server.
  */
-static const char *
+const char *
 deparse_composite_type_stmt(CompositeTypeStmt *stmt)
 {
 	StringInfoData sql = { 0 };
@@ -400,7 +537,7 @@ deparse_composite_type_stmt(CompositeTypeStmt *stmt)
 }
 
 
-static const char *
+const char *
 deparse_create_enum_stmt(CreateEnumStmt *stmt)
 {
 	StringInfoData sql = { 0 };
@@ -412,7 +549,7 @@ deparse_create_enum_stmt(CreateEnumStmt *stmt)
 }
 
 
-static const char *
+const char *
 deparse_alter_enum_stmt(AlterEnumStmt *stmt)
 {
 	StringInfoData sql = { 0 };
@@ -424,7 +561,7 @@ deparse_alter_enum_stmt(AlterEnumStmt *stmt)
 }
 
 
-static const char *
+const char *
 deparse_drop_type_stmt(DropStmt *stmt)
 {
 	StringInfoData str = { 0 };
@@ -438,7 +575,7 @@ deparse_drop_type_stmt(DropStmt *stmt)
 }
 
 
-static const char *
+const char *
 deparse_alter_type_stmt(AlterTableStmt *stmt)
 {
 	StringInfoData str = { 0 };
