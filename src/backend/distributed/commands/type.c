@@ -4,7 +4,7 @@
  *    Commands for TYPE statements.
  *    The following types are supported in citus
  *     - Composite Types
- *     - Enum Types (TODO)
+ *     - Enum Types
  *
  *    Base types are more complex and often involve c code from extensions.
  *    These types should be created by creating the extension on all the
