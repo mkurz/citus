@@ -35,11 +35,12 @@
 
 #include "distributed/commands.h"
 #include "distributed/metadata_sync.h"
+#include "distributed/multi_executor.h"
+#include "distributed/relation_access_tracking.h"
 #include "distributed/remote_commands.h"
 #include "distributed/transaction_management.h"
 #include "distributed/worker_manager.h"
 #include "distributed/worker_transaction.h"
-
 
 #define AlterEnumIsRename(stmt) (stmt->oldVal != NULL)
 #define AlterEnumIsAddValue(stmt) (stmt->oldVal == NULL)
@@ -50,6 +51,7 @@ static void makeRangeVarQualified(RangeVar *var);
 static List * FilterNameListForDistributedTypes(List *objects);
 static bool type_is_distributed(Oid typid);
 static TypeName * makeTypeNameFromRangeVar(const RangeVar *relation);
+static void EnsureSequentialModeForTypeDDL(void);
 
 
 /* recreate functions */
@@ -78,6 +80,7 @@ static void appendAlterTypeCmdDropColumn(StringInfo buf, AlterTableCmd *alterTab
 static void appendAlterTypeCmdAlterColumnType(StringInfo buf,
 											  AlterTableCmd *alterTableCmd);
 
+
 List *
 PlanCompositeTypeStmt(CompositeTypeStmt *stmt, const char *queryString)
 {
@@ -101,8 +104,10 @@ PlanCompositeTypeStmt(CompositeTypeStmt *stmt, const char *queryString)
 	ereport(DEBUG3, (errmsg("deparsed composite type statement"),
 					 errdetail("sql: %s", compositeTypeStmtSql)));
 
+
 	/* to prevent recursion with mx we disable ddl propagation */
 	/* TODO, mx expects the extension owner to be used here, this requires an alter owner statement as well */
+	EnsureSequentialModeForTypeDDL();
 	SendCommandToWorkersAsUser(ALL_WORKERS, DISABLE_DDL_PROPAGATION, NULL);
 	SendCommandToWorkersAsUser(ALL_WORKERS, compositeTypeStmtSql, NULL);
 
@@ -138,6 +143,7 @@ PlanAlterTypeStmt(AlterTableStmt *stmt, const char *queryString)
 					 errdetail("sql: %s", alterTypeStmtSql)));
 
 	/* TODO, mx expects the extension owner to be used here, this requires an alter owner statement as well */
+	EnsureSequentialModeForTypeDDL();
 	SendCommandToWorkersAsUser(ALL_WORKERS, DISABLE_DDL_PROPAGATION, NULL);
 	SendCommandToWorkersAsUser(ALL_WORKERS, alterTypeStmtSql, NULL);
 
@@ -169,6 +175,7 @@ PlanCreateEnumStmt(CreateEnumStmt *stmt, const char *queryString)
 
 	/* to prevent recursion with mx we disable ddl propagation */
 	/* TODO, mx expects the extension owner to be used here, this requires an alter owner statement as well */
+	EnsureSequentialModeForTypeDDL();
 	SendCommandToWorkersAsUser(ALL_WORKERS, DISABLE_DDL_PROPAGATION, NULL);
 	SendCommandToWorkersAsUser(ALL_WORKERS, createEnumStmtSql, NULL);
 
@@ -231,6 +238,7 @@ PlanAlterEnumStmt(AlterEnumStmt *stmt, const char *queryString)
 	{
 		/* other statements can be run in a transaction and will be dispatched here. */
 		/* TODO, mx expects the extension owner to be used here, this requires an alter owner statement as well */
+		EnsureSequentialModeForTypeDDL();
 		SendCommandToWorkersAsUser(ALL_WORKERS, DISABLE_DDL_PROPAGATION, NULL);
 		SendCommandToWorkersAsUser(ALL_WORKERS, alterEnumStmtSql, NULL);
 	}
@@ -275,6 +283,7 @@ PlanDropTypeStmt(DropStmt *stmt, const char *queryString)
 	stmt->objects = oldTypes;
 
 	/* to prevent recursion with mx we disable ddl propagation */
+	EnsureSequentialModeForTypeDDL();
 	SendCommandToWorkersAsUser(ALL_WORKERS, DISABLE_DDL_PROPAGATION, NULL);
 	SendCommandToWorkersAsUser(ALL_WORKERS, dropStmtSql, NULL);
 
@@ -513,6 +522,30 @@ makeTypeNameFromRangeVar(const RangeVar *relation)
 	names = lappend(names, makeString(relation->relname));
 
 	return makeTypeNameFromNameList(names);
+}
+
+
+static void
+EnsureSequentialModeForTypeDDL(void)
+{
+	if (ParallelQueryExecutedInTransaction())
+	{
+		ereport(ERROR, (errmsg("cannot create or modify type because there was a "
+							   "parallel operation on a distributed table in the "
+							   "transaction"),
+						errdetail("When creating or altering a type, Citus needs to "
+								  "perform all operations over a single connection per "
+								  "node to ensure consistency."),
+						errhint("Try re-running the transaction with "
+								"\"SET LOCAL citus.multi_shard_modify_mode TO "
+								"\'sequential\';\"")));
+	}
+
+	ereport(DEBUG1, (errmsg("switching to sequential query execution mode"),
+					 errdetail("Type is created or altered. To make sure subsequent "
+							   "commands see the type correctly we need to make sure to "
+							   "use only one connection for all future commands")));
+	SetLocalMultiShardModifyModeToSequential();
 }
 
 
