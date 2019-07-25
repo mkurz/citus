@@ -46,6 +46,9 @@
 #define AlterEnumIsAddValue(stmt) (stmt->oldVal == NULL)
 
 
+#define CREATE_IF_NOT_EXISTS_COMMAND "SELECT worker_create_if_not_exists(%s);"
+
+
 /* forward declaration for helper functions*/
 static void makeRangeVarQualified(RangeVar *var);
 static List * FilterNameListForDistributedTypes(List *objects);
@@ -441,6 +444,31 @@ EnumTypeExists(CreateEnumStmt *stmt)
 }
 
 
+List *
+CreateTypeDDLCommandsIdempotent(const ObjectAddress *typeAddress)
+{
+	List *ddlCommands = NIL;
+	Assert(typeAddress->classId == TypeRelationId);
+
+	/* capture creation command in its own scope TODO fix*/
+	do {
+		StringInfoData buf = { 0 };
+		Node *stmt = RecreateTypeStatement(typeAddress->objectId);
+
+		const char *ddlCommand = deparse_create_type_stmt(stmt);
+		ddlCommand = quote_literal_cstr(ddlCommand);
+
+		initStringInfo(&buf);
+		appendStringInfo(&buf, CREATE_IF_NOT_EXISTS_COMMAND, ddlCommand);
+		ddlCommands = lappend(ddlCommands, buf.data);
+	} while (0);
+
+	/* TODO add owner ship command */
+
+	return ddlCommands;
+}
+
+
 /********************************************************************************
  * Section with helper functions
  *********************************************************************************/
@@ -552,6 +580,27 @@ EnsureSequentialModeForTypeDDL(void)
 /********************************************************************************
  * Section with deparse functions
  *********************************************************************************/
+const char *
+deparse_create_type_stmt(Node *stmt)
+{
+	switch (stmt->type)
+	{
+		case T_CreateEnumStmt:
+		{
+			return deparse_create_enum_stmt(castNode(CreateEnumStmt, stmt));
+		}
+
+		case T_CompositeTypeStmt:
+		{
+			return deparse_composite_type_stmt(castNode(CompositeTypeStmt, stmt));
+		}
+
+		default:
+		{
+			ereport(ERROR, (errmsg("unsupported statement for deparse")));
+		}
+	}
+}
 
 
 /*

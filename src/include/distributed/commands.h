@@ -136,7 +136,9 @@ extern List * PlanDropTypeStmt(DropStmt *stmt, const char *queryString);
 extern Node * RecreateTypeStatement(Oid typeOid);
 extern bool CompositeTypeExists(CompositeTypeStmt *stmt);
 extern bool EnumTypeExists(CreateEnumStmt *stmt);
+extern List * CreateTypeDDLCommandsIdempotent(const ObjectAddress *typeAddress);
 
+extern const char * deparse_create_type_stmt(Node *stmt);
 extern const char * deparse_composite_type_stmt(CompositeTypeStmt *stmt);
 extern const char * deparse_create_enum_stmt(CreateEnumStmt *stmt);
 extern const char * deparse_drop_type_stmt(DropStmt *stmt);

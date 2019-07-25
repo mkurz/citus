@@ -156,6 +156,8 @@ extern void EnsureSchemaForRelationExistsOnNode(Oid relationId, char *nodeName,
 												int32 nodePort);
 extern void EnsureSchemaExistsOnAllNodes(Oid schemaId);
 extern void EnsureSchemaExistsOnNode(Oid schemaId, char *nodeName, int32 nodePort);
+extern void EnsureDependenciesExistsOnAllNodes(const ObjectAddress *target);
+extern void GetDependenciesForObject(const ObjectAddress *target, List **dependencyList);
 
 /* Remaining metadata utility functions  */
 extern char * TableOwner(Oid relationId);
