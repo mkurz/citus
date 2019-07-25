@@ -34,6 +34,7 @@
 #include "utils/typcache.h"
 
 #include "distributed/commands.h"
+#include "distributed/commands/utility_hook.h"
 #include "distributed/metadata_sync.h"
 #include "distributed/multi_executor.h"
 #include "distributed/relation_access_tracking.h"
@@ -90,6 +91,15 @@ PlanCompositeTypeStmt(CompositeTypeStmt *stmt, const char *queryString)
 	Oid schemaId = InvalidOid;
 	const char *compositeTypeStmtSql = NULL;
 
+	if (ExtensionStmtInProgess())
+	{
+		/*
+		 * extensions should be created separately on the workers, types cascading from an
+		 * extension should therefor not be propagated here.
+		 */
+		return NIL;
+	}
+
 	/*
 	 * managing types can only be done on the coordinator if ddl propagation is on. when
 	 * it is off we will never get here
@@ -130,6 +140,15 @@ PlanAlterTypeStmt(AlterTableStmt *stmt, const char *queryString)
 
 	Assert(stmt->relkind == OBJECT_TYPE);
 
+	if (ExtensionStmtInProgess())
+	{
+		/*
+		 * extensions should be created separately on the workers, types cascading from an
+		 * extension should therefor not be propagated here.
+		 */
+		return NIL;
+	}
+
 	/* check if type is distributed before we run the coordinator check */
 	typeName = makeTypeNameFromRangeVar(stmt->relation);
 	Oid typeOid = LookupTypeNameOid(NULL, typeName, false);
@@ -160,6 +179,15 @@ PlanCreateEnumStmt(CreateEnumStmt *stmt, const char *queryString)
 	Oid schemaId = InvalidOid;
 	char *objname = NULL;
 	const char *createEnumStmtSql = NULL;
+
+	if (ExtensionStmtInProgess())
+	{
+		/*
+		 * extensions should be created separately on the workers, types cascading from an
+		 * extension should therefor not be propagated here.
+		 */
+		return NIL;
+	}
 
 	/*
 	 * managing types can only be done on the coordinator if ddl propagation is on. when
@@ -195,6 +223,16 @@ PlanAlterEnumStmt(AlterEnumStmt *stmt, const char *queryString)
 	TypeName *typeName = makeTypeNameFromNameList(stmt->typeName);
 	Oid typeOid = LookupTypeNameOid(NULL, typeName, false);
 	const char *alterEnumStmtSql = NULL;
+
+	if (ExtensionStmtInProgess())
+	{
+		/*
+		 * extensions should be created separately on the workers, types cascading from an
+		 * extension should therefor not be propagated here.
+		 */
+		return NIL;
+	}
+
 	if (!type_is_distributed(typeOid))
 	{
 		return NIL;
@@ -258,9 +296,19 @@ PlanDropTypeStmt(DropStmt *stmt, const char *queryString)
 	 * the old list to put back
 	 */
 	List *oldTypes = stmt->objects;
-	List *distributedTypes = FilterNameListForDistributedTypes(oldTypes);
+	List *distributedTypes = NIL;
 	const char *dropStmtSql = NULL;
 
+	if (ExtensionStmtInProgess())
+	{
+		/*
+		 * extensions should be created separately on the workers, types cascading from an
+		 * extension should therefor not be propagated here.
+		 */
+		return NIL;
+	}
+
+	distributedTypes = FilterNameListForDistributedTypes(oldTypes);
 	if (list_length(distributedTypes) <= 0)
 	{
 		/*

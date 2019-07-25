@@ -18,6 +18,7 @@
 #include "access/htup.h"
 #include "access/tupdesc.h"
 #include "catalog/indexing.h"
+#include "catalog/objectaddress.h"
 #include "distributed/citus_nodes.h"
 #include "distributed/relay_utility.h"
 #include "utils/acl.h"
