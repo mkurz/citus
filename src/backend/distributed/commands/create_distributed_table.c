@@ -48,6 +48,7 @@
 #include "distributed/reference_table_utils.h"
 #include "distributed/relation_access_tracking.h"
 #include "distributed/remote_commands.h"
+#include "distributed/resource_lock.h"
 #include "distributed/worker_protocol.h"
 #include "distributed/worker_transaction.h"
 #include "distributed/version_compat.h"
@@ -152,6 +153,12 @@ master_create_distributed_table(PG_FUNCTION_ARGS)
 	{
 		ereport(ERROR, (errmsg("could not create distributed table: "
 							   "relation does not exist")));
+	}
+
+	/* we need to lock partitions too */
+	if (PartitionedTableNoLock(relationId))
+	{
+		LockPartitionRelations(relationId, ExclusiveLock);
 	}
 
 	/*
