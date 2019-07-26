@@ -14,12 +14,14 @@
 #include "access/genam.h"
 #include "access/htup_details.h"
 #include "access/skey.h"
+#include "access/xact.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
 #include "catalog/objectaddress.h"
 #include "catalog/pg_depend.h"
 #include "catalog/pg_type_d.h"
 #include "nodes/pg_list.h"
+#include "utils/builtins.h"
 #include "utils/fmgroids.h"
 #include "utils/lsyscache.h"
 
@@ -28,6 +30,7 @@
 #include "distributed/master_metadata_utility.h"
 #include "distributed/metadata_cache.h"
 #include "distributed/metadata_sync.h"
+#include "distributed/pg_dist_object.h"
 #include "distributed/remote_commands.h"
 #include "distributed/worker_manager.h"
 
@@ -36,7 +39,85 @@ static bool ShouldFollowDependency(const ObjectAddress *toFollow);
 static bool IsObjectAddressInList(const ObjectAddress *findAddress, List *addressList);
 static bool IsObjectAddressOwnedByExtension(const ObjectAddress *target);
 static List * GetDependencyCreateDDLCommands(const ObjectAddress *dependency);
-static List * GetDependenciesCreateDDLCommands(List *dependencies);
+
+
+/*
+ * InsertIntoPgDistObjectByAddress inserts a record into pg_dist_objects to mark the
+ * object addressed by ObjectAddress as a distributed object.
+ */
+void
+InsertIntoPgDistObjectByAddress(const ObjectAddress *address)
+{
+	InsertIntoPgDistObject(address->classId, getObjectIdentity(address));
+}
+
+
+void
+InsertIntoPgDistObject(Oid classId, const char *identifier)
+{
+	Relation pgDistObject = NULL;
+
+	HeapTuple newTuple = NULL;
+	Datum newValues[Natts_pg_dist_object];
+	bool newNulls[Natts_pg_dist_object];
+
+	/* open system catalog and insert new tuple */
+	pgDistObject = heap_open(DistObjectRelationId(), RowExclusiveLock);
+
+	/* form new tuple for pg_dist_partition */
+	memset(newValues, 0, sizeof(newValues));
+	memset(newNulls, false, sizeof(newNulls));
+
+	newValues[Anum_pg_dist_object_classid - 1] = ObjectIdGetDatum(classId);
+	newValues[Anum_pg_dist_object_identifier - 1] = CStringGetTextDatum(identifier);
+
+	newTuple = heap_form_tuple(RelationGetDescr(pgDistObject), newValues, newNulls);
+
+	/* finally insert tuple, build index entries & register cache invalidation */
+	CatalogTupleInsert(pgDistObject, newTuple);
+
+	/* TODO should we record a dependency on the citus extension? probably not as we
+	 * ignore objects with a dependency to any extension, assuming the extension will
+	 * create the object on the remote end.
+	 * RecordDistributedRelationDependencies(relationId, (Node *) distributionColumn);
+	 */
+
+	CommandCounterIncrement();
+	heap_close(pgDistObject, NoLock);
+}
+
+
+bool
+IsInPgDistObject(const ObjectAddress *address)
+{
+	Relation pgDistObjectRel = NULL;
+	ScanKeyData key[2] = { 0 };
+	SysScanDesc pgDistObjectScan = NULL;
+	HeapTuple pgDistObjectTup = NULL;
+	bool result = false;
+
+	pgDistObjectRel = heap_open(DistObjectRelationId(), AccessShareLock);
+
+	/* scan pg_dist_object for classid = $1 AND identifier = $2 */
+	ScanKeyInit(&key[0], Anum_pg_dist_object_classid, BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(address->classId));
+	ScanKeyInit(&key[1], Anum_pg_dist_object_identifier, BTEqualStrategyNumber, F_TEXTEQ,
+				CStringGetTextDatum(getObjectIdentity(address)));
+	pgDistObjectScan = systable_beginscan(pgDistObjectRel, InvalidOid, false, NULL, 2,
+										  key);
+
+	while (HeapTupleIsValid(pgDistObjectTup = systable_getnext(pgDistObjectScan)))
+	{
+		/* tuplpe found, we are done */
+		result = true;
+		break;
+	}
+
+	systable_endscan(pgDistObjectScan);
+	relation_close(pgDistObjectRel, AccessShareLock);
+
+	return result;
+}
 
 
 /*
@@ -48,56 +129,73 @@ static List * GetDependenciesCreateDDLCommands(List *dependencies);
 void
 EnsureDependenciesExistsOnAllNodes(const ObjectAddress *target)
 {
-	List *workerNodeList = NULL;
 	const uint64 connectionFlag = FORCE_NEW_CONNECTION;
-	ListCell *workerNodeCell = NULL;
+	ListCell *dependencyCell = NULL;
 
 	List *dependencies = NIL;
-	List *ddlCommands = NIL;
+	List *connections = NULL;
+	ListCell *connectionCell = NULL;
 
 	/* collect all dependencies in creation order and get their ddl commands */
 	GetDependenciesForObject(target, &dependencies);
-	ddlCommands = GetDependenciesCreateDDLCommands(dependencies);
 
-	if (list_length(ddlCommands) <= 0)
-	{
-		/* no command to execute on workers */
-		return;
-	}
-
-	workerNodeList = ActivePrimaryNodeList();
-	foreach(workerNodeCell, workerNodeList)
-	{
-		WorkerNode *workerNode = (WorkerNode *) lfirst(workerNodeCell);
-		MultiConnection *connection = NULL;
-
-		char *nodeName = workerNode->workerName;
-		uint32 nodePort = workerNode->workerPort;
-
-		connection = GetNodeUserDatabaseConnection(connectionFlag, nodeName, nodePort,
-												   CitusExtensionOwnerName(), NULL);
-
-		ExecuteCriticalRemoteCommandList(connection, ddlCommands);
-
-		/* make sure connection is not reused either */
-		CloseConnection(connection);
-	}
-}
-
-
-static List *
-GetDependenciesCreateDDLCommands(List *dependencies)
-{
-	List *ddlCommands = NULL;
-	ListCell *dependencyCell = NULL;
-
+	/* create all dependencies on all nodes and mark them as distributed */
 	foreach(dependencyCell, dependencies)
 	{
 		ObjectAddress *dependency = (ObjectAddress *) lfirst(dependencyCell);
-		List *dependencyDDLCommands = GetDependencyCreateDDLCommands(dependency);
-		ddlCommands = list_concat(ddlCommands, dependencyDDLCommands);
+		List *ddlCommands = GetDependencyCreateDDLCommands(dependency);
+
+		if (list_length(ddlCommands) <= 0)
+		{
+			continue;
+		}
+
+		/* initialize connections on first commands to execute */
+		if (connections == NULL)
+		{
+			/* first command to be executed connect to nodes */
+			List *workerNodeList = ActivePrimaryNodeList();
+			ListCell *workerNodeCell = NULL;
+
+			if (list_length(workerNodeList) <= 0)
+			{
+				/* no nodes to execute on, we can break out */
+				break;
+			}
+
+			foreach(workerNodeCell, workerNodeList)
+			{
+				WorkerNode *workerNode = (WorkerNode *) lfirst(workerNodeCell);
+				MultiConnection *connection = NULL;
+
+				char *nodeName = workerNode->workerName;
+				uint32 nodePort = workerNode->workerPort;
+
+				connection = GetNodeUserDatabaseConnection(connectionFlag, nodeName,
+														   nodePort,
+														   CitusExtensionOwnerName(),
+														   NULL);
+
+				connections = lappend(connections, connection);
+			}
+		}
+
+		/* create dependency on all worker nodes*/
+		foreach(connectionCell, connections)
+		{
+			MultiConnection *connection = (MultiConnection *) lfirst(connectionCell);
+			ExecuteCriticalRemoteCommandList(connection, ddlCommands);
+		}
+
+		/* mark the object as distributed in this transaction */
+		InsertIntoPgDistObjectByAddress(dependency);
 	}
-	return ddlCommands;
+
+	foreach(connectionCell, connections)
+	{
+		MultiConnection *connection = (MultiConnection *) lfirst(connectionCell);
+		CloseConnection(connection);
+	}
 }
 
 
@@ -231,6 +329,14 @@ ShouldFollowDependency(const ObjectAddress *toFollow)
 	 * extension when that was created on the worker
 	 */
 	if (IsObjectAddressOwnedByExtension(toFollow))
+	{
+		return false;
+	}
+
+	/*
+	 * If the object is already distributed we do not have to follow this object
+	 */
+	if (IsInPgDistObject(toFollow))
 	{
 		return false;
 	}

@@ -214,6 +214,8 @@ create_distributed_table(PG_FUNCTION_ARGS)
 	 * via their own connection and committed immediately so they become visible to all
 	 * sessions creating shards.
 	 */
+
+	/* TODO the dependencies are created outside of this transaction, the book keeping within */
 	ObjectAddressSet(tableAddress, RelationRelationId, relationId);
 	EnsureDependenciesExistsOnAllNodes(&tableAddress);
 

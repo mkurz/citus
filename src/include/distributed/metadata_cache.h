@@ -130,6 +130,7 @@ extern Oid DistShardRelationId(void);
 extern Oid DistPlacementRelationId(void);
 extern Oid DistNodeRelationId(void);
 extern Oid DistLocalGroupIdRelationId(void);
+extern Oid DistObjectRelationId(void);
 
 /* index oids */
 extern Oid DistNodeNodeIdIndexId(void);

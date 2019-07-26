@@ -112,6 +112,7 @@ typedef struct MetadataCacheData
 	Oid distNodeRelationId;
 	Oid distNodeNodeIdIndexId;
 	Oid distLocalGroupRelationId;
+	Oid distObjectRelationId;
 	Oid distColocationRelationId;
 	Oid distColocationConfigurationIndexId;
 	Oid distColocationColocationidIndexId;
@@ -1800,6 +1801,17 @@ DistLocalGroupIdRelationId(void)
 						 &MetadataCache.distLocalGroupRelationId);
 
 	return MetadataCache.distLocalGroupRelationId;
+}
+
+
+/* return oid of pg_dist_shard relation */
+Oid
+DistObjectRelationId(void)
+{
+	CachedRelationLookup("pg_dist_object",
+						 &MetadataCache.distObjectRelationId);
+
+	return MetadataCache.distObjectRelationId;
 }
 
 

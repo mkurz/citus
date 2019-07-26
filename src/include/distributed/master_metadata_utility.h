@@ -159,6 +159,9 @@ extern void EnsureSchemaExistsOnAllNodes(Oid schemaId);
 extern void EnsureSchemaExistsOnNode(Oid schemaId, char *nodeName, int32 nodePort);
 extern void EnsureDependenciesExistsOnAllNodes(const ObjectAddress *target);
 extern void GetDependenciesForObject(const ObjectAddress *target, List **dependencyList);
+extern bool IsInPgDistObject(const ObjectAddress *address);
+extern void InsertIntoPgDistObjectByAddress(const ObjectAddress *address);
+extern void InsertIntoPgDistObject(Oid classId, const char *identifier);
 
 /* Remaining metadata utility functions  */
 extern char * TableOwner(Oid relationId);

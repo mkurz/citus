@@ -53,7 +53,6 @@
 /* forward declaration for helper functions*/
 static void makeRangeVarQualified(RangeVar *var);
 static List * FilterNameListForDistributedTypes(List *objects);
-static bool type_is_distributed(Oid typid);
 static TypeName * makeTypeNameFromRangeVar(const RangeVar *relation);
 static void EnsureSequentialModeForTypeDDL(void);
 
@@ -90,6 +89,7 @@ PlanCompositeTypeStmt(CompositeTypeStmt *stmt, const char *queryString)
 {
 	Oid schemaId = InvalidOid;
 	const char *compositeTypeStmtSql = NULL;
+	const char *identifier = NULL;
 
 	if (ExtensionStmtInProgess())
 	{
@@ -124,6 +124,10 @@ PlanCompositeTypeStmt(CompositeTypeStmt *stmt, const char *queryString)
 	SendCommandToWorkersAsUser(ALL_WORKERS, DISABLE_DDL_PROPAGATION, NULL);
 	SendCommandToWorkersAsUser(ALL_WORKERS, compositeTypeStmtSql, NULL);
 
+	/* mark the type as distributed */
+	identifier = quote_qualified_identifier(stmt->typevar->schemaname,
+											stmt->typevar->relname);
+	InsertIntoPgDistObject(TypeRelationId, identifier);
 
 	return NULL;
 }
@@ -137,6 +141,8 @@ PlanAlterTypeStmt(AlterTableStmt *stmt, const char *queryString)
 {
 	const char *alterTypeStmtSql = NULL;
 	TypeName *typeName = NULL;
+	Oid typeOid = InvalidOid;
+	ObjectAddress typeAddress = { 0 };
 
 	Assert(stmt->relkind == OBJECT_TYPE);
 
@@ -151,8 +157,9 @@ PlanAlterTypeStmt(AlterTableStmt *stmt, const char *queryString)
 
 	/* check if type is distributed before we run the coordinator check */
 	typeName = makeTypeNameFromRangeVar(stmt->relation);
-	Oid typeOid = LookupTypeNameOid(NULL, typeName, false);
-	if (!type_is_distributed(typeOid))
+	typeOid = LookupTypeNameOid(NULL, typeName, false);
+	ObjectAddressSet(typeAddress, TypeRelationId, typeOid);
+	if (!IsInPgDistObject(&typeAddress))
 	{
 		return NIL;
 	}
@@ -179,6 +186,8 @@ PlanCreateEnumStmt(CreateEnumStmt *stmt, const char *queryString)
 	Oid schemaId = InvalidOid;
 	char *objname = NULL;
 	const char *createEnumStmtSql = NULL;
+	const char *identifier = NULL;
+	RangeVar *var = NULL;
 
 	if (ExtensionStmtInProgess())
 	{
@@ -195,6 +204,14 @@ PlanCreateEnumStmt(CreateEnumStmt *stmt, const char *queryString)
 	 */
 	EnsureCoordinator();
 
+	/* enforce fully qualified typeName for correct deparsing and pg_dist_object */
+	var = makeRangeVarFromNameList(stmt->typeName);
+	if (var->schemaname == NULL)
+	{
+		makeRangeVarQualified(var);
+		stmt->typeName = list_make2(var->schemaname, var->relname);
+	}
+
 	/* make sure the namespace used for the creation of the type exists on all workers */
 	schemaId = QualifiedNameGetCreationNamespace(stmt->typeName, &objname);
 	EnsureSchemaExistsOnAllNodes(schemaId);
@@ -210,6 +227,10 @@ PlanCreateEnumStmt(CreateEnumStmt *stmt, const char *queryString)
 	SendCommandToWorkersAsUser(ALL_WORKERS, DISABLE_DDL_PROPAGATION, NULL);
 	SendCommandToWorkersAsUser(ALL_WORKERS, createEnumStmtSql, NULL);
 
+	/* mark the type as distributed */
+	identifier = quote_qualified_identifier(var->schemaname, var->relname);
+	InsertIntoPgDistObject(TypeRelationId, identifier);
+
 	return NULL;
 }
 
@@ -220,8 +241,9 @@ PlanCreateEnumStmt(CreateEnumStmt *stmt, const char *queryString)
 List *
 PlanAlterEnumStmt(AlterEnumStmt *stmt, const char *queryString)
 {
-	TypeName *typeName = makeTypeNameFromNameList(stmt->typeName);
-	Oid typeOid = LookupTypeNameOid(NULL, typeName, false);
+	TypeName *typeName = NULL;
+	Oid typeOid = InvalidOid;
+	ObjectAddress typeAddress = { 0 };
 	const char *alterEnumStmtSql = NULL;
 
 	if (ExtensionStmtInProgess())
@@ -233,7 +255,10 @@ PlanAlterEnumStmt(AlterEnumStmt *stmt, const char *queryString)
 		return NIL;
 	}
 
-	if (!type_is_distributed(typeOid))
+	typeName = makeTypeNameFromNameList(stmt->typeName);
+	typeOid = LookupTypeNameOid(NULL, typeName, false);
+	ObjectAddressSet(typeAddress, TypeRelationId, typeOid);
+	if (!IsInPgDistObject(&typeAddress))
 	{
 		return NIL;
 	}
@@ -278,7 +303,6 @@ PlanAlterEnumStmt(AlterEnumStmt *stmt, const char *queryString)
 	else
 	{
 		/* other statements can be run in a transaction and will be dispatched here. */
-		/* TODO, mx expects the extension owner to be used here, this requires an alter owner statement as well */
 		EnsureSequentialModeForTypeDDL();
 		SendCommandToWorkersAsUser(ALL_WORKERS, DISABLE_DDL_PROPAGATION, NULL);
 		SendCommandToWorkersAsUser(ALL_WORKERS, alterEnumStmtSql, NULL);
@@ -539,35 +563,14 @@ FilterNameListForDistributedTypes(List *objects)
 	{
 		TypeName *typeName = castNode(TypeName, lfirst(objectCell));
 		Oid typeOid = LookupTypeNameOid(NULL, typeName, false);
-		if (type_is_distributed(typeOid))
+		ObjectAddress typeAddress = { 0 };
+		ObjectAddressSet(typeAddress, TypeRelationId, typeOid);
+		if (IsInPgDistObject(&typeAddress))
 		{
 			result = lappend(result, typeName);
 		}
 	}
 	return result;
-}
-
-
-/*
- * type_is_distributed checks if a given type (based on its oid) is a distributed type.
- */
-static bool
-type_is_distributed(Oid typid)
-{
-	/* TODO keep track explicitly of distributed types and check here */
-	switch (get_typtype(typid))
-	{
-		case TYPTYPE_COMPOSITE:
-		case TYPTYPE_ENUM:
-		{
-			return true;
-		}
-
-		default:
-		{
-			return false;
-		}
-	}
 }
 
 
