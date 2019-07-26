@@ -23,13 +23,13 @@
 #include "utils/fmgroids.h"
 #include "utils/lsyscache.h"
 
+#include "distributed/commands.h"
 #include "distributed/connection_management.h"
 #include "distributed/master_metadata_utility.h"
 #include "distributed/metadata_cache.h"
+#include "distributed/metadata_sync.h"
 #include "distributed/remote_commands.h"
 #include "distributed/worker_manager.h"
-#include "distributed/metadata_sync.h"
-#include "distributed/commands.h"
 
 
 static bool ShouldFollowDependency(const ObjectAddress *toFollow);
