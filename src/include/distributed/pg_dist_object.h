@@ -45,4 +45,4 @@ typedef FormData_pg_dist_object *Form_pg_dist_object;
 #define Anum_pg_dist_object_classid 1
 #define Anum_pg_dist_object_identifier 2
 
-#endif //PG_DIST_OBJECT_H
+#endif /* PG_DIST_OBJECT_H */
