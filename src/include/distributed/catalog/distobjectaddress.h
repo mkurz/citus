@@ -38,9 +38,11 @@ typedef struct DistObjectAddress
 
 extern DistObjectAddress * getDistObjectAddressFromPg(const ObjectAddress *address);
 extern ObjectAddress * getObjectAddresFromCitus(const DistObjectAddress *distAddress);
+extern DistObjectAddress * makeDistObjectAddress(Oid classid, const char *identifier);
 
-extern bool IsInPgDistObject(const ObjectAddress *address);
-extern void InsertIntoPgDistObjectByAddress(const ObjectAddress *address);
-extern void InsertIntoPgDistObject(Oid classId, const char *identifier);
+extern bool isObjectDistributedByAddress(const ObjectAddress *address);
+extern bool isObjectDistributed(const DistObjectAddress *distAddress);
+extern void recordObjectDistributedByAddress(const ObjectAddress *address);
+extern void recordObjectDistributed(const DistObjectAddress *distAddress);
 
 #endif /* CITUS_CATALOG_DISTOBJECTADDRESS_H */

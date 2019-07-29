@@ -128,7 +128,7 @@ PlanCompositeTypeStmt(CompositeTypeStmt *stmt, const char *queryString)
 	/* mark the type as distributed */
 	identifier = quote_qualified_identifier(stmt->typevar->schemaname,
 											stmt->typevar->relname);
-	InsertIntoPgDistObject(TypeRelationId, identifier);
+	recordObjectDistributed(makeDistObjectAddress(TypeRelationId, identifier));
 
 	return NULL;
 }
@@ -160,7 +160,7 @@ PlanAlterTypeStmt(AlterTableStmt *stmt, const char *queryString)
 	typeName = makeTypeNameFromRangeVar(stmt->relation);
 	typeOid = LookupTypeNameOid(NULL, typeName, false);
 	ObjectAddressSet(typeAddress, TypeRelationId, typeOid);
-	if (!IsInPgDistObject(&typeAddress))
+	if (!isObjectDistributedByAddress(&typeAddress))
 	{
 		return NIL;
 	}
@@ -230,7 +230,7 @@ PlanCreateEnumStmt(CreateEnumStmt *stmt, const char *queryString)
 
 	/* mark the type as distributed */
 	identifier = quote_qualified_identifier(var->schemaname, var->relname);
-	InsertIntoPgDistObject(TypeRelationId, identifier);
+	recordObjectDistributed(makeDistObjectAddress(TypeRelationId, identifier));
 
 	return NULL;
 }
@@ -259,7 +259,7 @@ PlanAlterEnumStmt(AlterEnumStmt *stmt, const char *queryString)
 	typeName = makeTypeNameFromNameList(stmt->typeName);
 	typeOid = LookupTypeNameOid(NULL, typeName, false);
 	ObjectAddressSet(typeAddress, TypeRelationId, typeOid);
-	if (!IsInPgDistObject(&typeAddress))
+	if (!isObjectDistributedByAddress(&typeAddress))
 	{
 		return NIL;
 	}
@@ -566,7 +566,7 @@ FilterNameListForDistributedTypes(List *objects)
 		Oid typeOid = LookupTypeNameOid(NULL, typeName, false);
 		ObjectAddress typeAddress = { 0 };
 		ObjectAddressSet(typeAddress, TypeRelationId, typeOid);
-		if (IsInPgDistObject(&typeAddress))
+		if (isObjectDistributedByAddress(&typeAddress))
 		{
 			result = lappend(result, typeName);
 		}

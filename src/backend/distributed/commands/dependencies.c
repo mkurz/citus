@@ -92,7 +92,7 @@ EnsureDependenciesExistsOnAllNodes(const ObjectAddress *target)
 		}
 
 		/* mark the object as distributed in this transaction */
-		InsertIntoPgDistObjectByAddress(dependency);
+		recordObjectDistributedByAddress(dependency);
 	}
 
 	foreach(connectionCell, connections)

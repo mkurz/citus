@@ -157,7 +157,7 @@ ShouldFollowDependency(const ObjectAddress *toFollow)
 	/*
 	 * If the object is already distributed we do not have to follow this object
 	 */
-	if (IsInPgDistObject(toFollow))
+	if (isObjectDistributedByAddress(toFollow))
 	{
 		return false;
 	}

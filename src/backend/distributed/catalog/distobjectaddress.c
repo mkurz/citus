@@ -100,18 +100,35 @@ getObjectAddresFromCitus(const DistObjectAddress *distAddress)
 
 
 /*
- * InsertIntoPgDistObjectByAddress inserts a record into pg_dist_objects to mark the
- * object addressed by ObjectAddress as a distributed object.
+ * makeDistObjectAddress creates a newly allocated DistObjectAddress that points to the
+ * classId and identifier passed. No checks are performed to verify the object exists.
  */
-void
-InsertIntoPgDistObjectByAddress(const ObjectAddress *address)
+DistObjectAddress *
+makeDistObjectAddress(Oid classid, const char *identifier)
 {
-	InsertIntoPgDistObject(address->classId, getObjectIdentity(address));
+	DistObjectAddress *distAddress = palloc0(sizeof(DistObjectAddress));
+	distAddress->classId = classid;
+	distAddress->identifier = pstrdup(identifier);
+	return distAddress;
 }
 
 
+/*
+ * recordObjectDistributedByAddress marks an object as a distributed object by is postgres
+ * address.
+ */
 void
-InsertIntoPgDistObject(Oid classId, const char *identifier)
+recordObjectDistributedByAddress(const ObjectAddress *address)
+{
+	recordObjectDistributed(getDistObjectAddressFromPg(address));
+}
+
+
+/*
+ * recordObjectDistributed mark an object as a distributed object in citus.
+ */
+void
+recordObjectDistributed(const DistObjectAddress *distAddress)
 {
 	Relation pgDistObject = NULL;
 
@@ -126,27 +143,37 @@ InsertIntoPgDistObject(Oid classId, const char *identifier)
 	memset(newValues, 0, sizeof(newValues));
 	memset(newNulls, false, sizeof(newNulls));
 
-	newValues[Anum_pg_dist_object_classid - 1] = ObjectIdGetDatum(classId);
-	newValues[Anum_pg_dist_object_identifier - 1] = CStringGetTextDatum(identifier);
+	newValues[Anum_pg_dist_object_classid - 1] = ObjectIdGetDatum(distAddress->classId);
+	newValues[Anum_pg_dist_object_identifier - 1] = CStringGetTextDatum(
+		distAddress->identifier);
 
 	newTuple = heap_form_tuple(RelationGetDescr(pgDistObject), newValues, newNulls);
 
 	/* finally insert tuple, build index entries & register cache invalidation */
 	CatalogTupleInsert(pgDistObject, newTuple);
 
-	/* TODO should we record a dependency on the citus extension? probably not as we
-	 * ignore objects with a dependency to any extension, assuming the extension will
-	 * create the object on the remote end.
-	 * RecordDistributedRelationDependencies(relationId, (Node *) distributionColumn);
-	 */
-
 	CommandCounterIncrement();
 	heap_close(pgDistObject, NoLock);
 }
 
 
+/*
+ * isObjectDistributedByAddress returns if the postgres object addressed by address is
+ * know to be distributed by citus.
+ */
 bool
-IsInPgDistObject(const ObjectAddress *address)
+isObjectDistributedByAddress(const ObjectAddress *address)
+{
+	return isObjectDistributed(getDistObjectAddressFromPg(address));
+}
+
+
+/*
+ * isObjectDistributed returns if the object identified by the distAddress is already
+ * distributed in the cluster. This performs a local lookup in pg_dist_object.
+ */
+bool
+isObjectDistributed(const DistObjectAddress *distAddress)
 {
 	Relation pgDistObjectRel = NULL;
 	ScanKeyData key[2] = { 0 };
@@ -158,9 +185,9 @@ IsInPgDistObject(const ObjectAddress *address)
 
 	/* scan pg_dist_object for classid = $1 AND identifier = $2 */
 	ScanKeyInit(&key[0], Anum_pg_dist_object_classid, BTEqualStrategyNumber, F_OIDEQ,
-				ObjectIdGetDatum(address->classId));
+				ObjectIdGetDatum(distAddress->classId));
 	ScanKeyInit(&key[1], Anum_pg_dist_object_identifier, BTEqualStrategyNumber, F_TEXTEQ,
-				CStringGetTextDatum(getObjectIdentity(address)));
+				CStringGetTextDatum(distAddress->identifier));
 	pgDistObjectScan = systable_beginscan(pgDistObjectRel, InvalidOid, false, NULL, 2,
 										  key);
 
