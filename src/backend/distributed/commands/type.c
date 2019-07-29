@@ -33,6 +33,7 @@
 #include "utils/regproc.h"
 #include "utils/typcache.h"
 
+#include "distributed/catalog/distobjectaddress.h"
 #include "distributed/commands.h"
 #include "distributed/commands/utility_hook.h"
 #include "distributed/metadata_sync.h"
