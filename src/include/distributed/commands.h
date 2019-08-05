@@ -22,14 +22,6 @@
 /* cluster.c - forward declarations */
 extern List * PlanClusterStmt(ClusterStmt *clusterStmt, const char *clusterCommand);
 
-/* collate.c - forward declarations */
-/* Control flags for format_collate_extended, compatible with format_type_extended */
-#define FORMAT_COLLATE_ALLOW_INVALID 0x02       /* allow invalid types */
-#define FORMAT_COLLATE_FORCE_QUALIFY 0x04       /* force qualification of collate */
-extern char * format_collate_be(Oid type_oid);
-extern char * format_collate_be_qualified(Oid type_oid);
-extern char * format_collate_extended(Oid collid, bits16 flags);
-
 
 /* extension.c - forward declarations */
 extern bool IsCitusExtensionStmt(Node *parsetree);
@@ -137,13 +129,6 @@ extern Node * RecreateTypeStatement(Oid typeOid);
 extern bool CompositeTypeExists(CompositeTypeStmt *stmt);
 extern bool EnumTypeExists(CreateEnumStmt *stmt);
 extern List * CreateTypeDDLCommandsIdempotent(const ObjectAddress *typeAddress);
-
-extern const char * deparse_create_type_stmt(Node *stmt);
-extern const char * deparse_composite_type_stmt(CompositeTypeStmt *stmt);
-extern const char * deparse_create_enum_stmt(CreateEnumStmt *stmt);
-extern const char * deparse_drop_type_stmt(DropStmt *stmt);
-extern const char * deparse_alter_enum_stmt(AlterEnumStmt *stmt);
-extern const char * deparse_alter_type_stmt(AlterTableStmt *stmt);
 
 /* vacuum.c - froward declarations */
 extern void ProcessVacuumStmt(VacuumStmt *vacuumStmt, const char *vacuumCommand);

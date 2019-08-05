@@ -25,17 +25,20 @@
 #include "catalog/namespace.h"
 #include "catalog/pg_enum.h"
 #include "catalog/pg_type.h"
+#include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "parser/parse_type.h"
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
 #include "utils/lsyscache.h"
 #include "utils/regproc.h"
+#include "utils/syscache.h"
 #include "utils/typcache.h"
 
 #include "distributed/catalog/distobjectaddress.h"
 #include "distributed/commands.h"
 #include "distributed/commands/utility_hook.h"
+#include "distributed/deparser.h"
 #include "distributed/metadata_sync.h"
 #include "distributed/multi_executor.h"
 #include "distributed/relation_access_tracking.h"
@@ -49,6 +52,7 @@
 
 
 #define CREATE_IF_NOT_EXISTS_COMMAND "SELECT worker_create_if_not_exists(%s);"
+#define ALTER_TYPE_OWNER_COMMAND "ALTER TYPE %s OWNER TO %s;"
 
 
 /* forward declaration for helper functions*/
@@ -56,6 +60,7 @@ static void makeRangeVarQualified(RangeVar *var);
 static List * FilterNameListForDistributedTypes(List *objects);
 static TypeName * makeTypeNameFromRangeVar(const RangeVar *relation);
 static void EnsureSequentialModeForTypeDDL(void);
+static Oid get_typowner(Oid typid);
 
 
 /* recreate functions */
@@ -63,26 +68,6 @@ static CompositeTypeStmt * RecreateCompositeTypeStmt(Oid typeOid);
 static List * composite_type_coldeflist(Oid typeOid);
 static CreateEnumStmt * RecreateEnumStmt(Oid typeOid);
 static List * enum_vals_list(Oid typeOid);
-
-/* forward declaration for deparse functions */
-static void appendCompositeTypeStmt(StringInfo str, CompositeTypeStmt *stmt);
-static void appendColumnDef(StringInfo str, ColumnDef *columnDef);
-static void appendColumnDefList(StringInfo str, List *columnDefs);
-
-static void appendCreateEnumStmt(StringInfo str, CreateEnumStmt *stmt);
-static void appendStringList(StringInfo str, List *strings);
-
-static void appendDropTypeStmt(StringInfo buf, DropStmt *stmt);
-static void appendTypeNameList(StringInfo buf, List *objects);
-
-static void appendAlterEnumStmt(StringInfo buf, AlterEnumStmt *stmt);
-
-static void appendAlterTypeStmt(StringInfo buf, AlterTableStmt *stmt);
-static void appendAlterTypeCmd(StringInfo buf, AlterTableCmd *alterTableCmd);
-static void appendAlterTypeCmdAddColumn(StringInfo buf, AlterTableCmd *alterTableCmd);
-static void appendAlterTypeCmdDropColumn(StringInfo buf, AlterTableCmd *alterTableCmd);
-static void appendAlterTypeCmdAlterColumnType(StringInfo buf,
-											  AlterTableCmd *alterTableCmd);
 
 
 List *
@@ -521,22 +506,27 @@ List *
 CreateTypeDDLCommandsIdempotent(const ObjectAddress *typeAddress)
 {
 	List *ddlCommands = NIL;
+	const char *ddlCommand = NULL;
+	Node *stmt = NULL;
+	StringInfoData buf = { 0 };
+	const char *username = NULL;
+
 	Assert(typeAddress->classId == TypeRelationId);
 
-	/* capture creation command in its own scope TODO fix*/
-	do {
-		StringInfoData buf = { 0 };
-		Node *stmt = RecreateTypeStatement(typeAddress->objectId);
+	stmt = RecreateTypeStatement(typeAddress->objectId);
 
-		const char *ddlCommand = deparse_create_type_stmt(stmt);
-		ddlCommand = quote_literal_cstr(ddlCommand);
+	/* capture ddl command for recreation and wrap in create if not exists construct */
+	ddlCommand = deparse_create_type_stmt(stmt);
+	ddlCommand = quote_literal_cstr(ddlCommand);
+	initStringInfo(&buf);
+	appendStringInfo(&buf, CREATE_IF_NOT_EXISTS_COMMAND, ddlCommand);
+	ddlCommands = lappend(ddlCommands, pstrdup(buf.data));
 
-		initStringInfo(&buf);
-		appendStringInfo(&buf, CREATE_IF_NOT_EXISTS_COMMAND, ddlCommand);
-		ddlCommands = lappend(ddlCommands, buf.data);
-	} while (0);
-
-	/* TODO add owner ship command */
+	/* add owner ship change so the creation command can be run as a different user */
+	username = GetUserNameFromId(get_typowner(typeAddress->objectId), false);
+	resetStringInfo(&buf);
+	appendStringInfo(&buf, ALTER_TYPE_OWNER_COMMAND, getObjectIdentity(typeAddress),
+					 quote_identifier(username));
 
 	return ddlCommands;
 }
@@ -571,6 +561,30 @@ FilterNameListForDistributedTypes(List *objects)
 			result = lappend(result, typeName);
 		}
 	}
+	return result;
+}
+
+
+/*
+ * get_typowner
+ *
+ *		Given the type OID, find its owner
+ */
+static Oid
+get_typowner(Oid typid)
+{
+	Oid result = InvalidOid;
+	HeapTuple tp = NULL;
+
+	tp = SearchSysCache1(TYPEOID, ObjectIdGetDatum(typid));
+	if (HeapTupleIsValid(tp))
+	{
+		Form_pg_type typtup = (Form_pg_type) GETSTRUCT(tp);
+
+		result = typtup->typowner;
+		ReleaseSysCache(tp);
+	}
+
 	return result;
 }
 
@@ -626,374 +640,4 @@ EnsureSequentialModeForTypeDDL(void)
 							   "commands see the type correctly we need to make sure to "
 							   "use only one connection for all future commands")));
 	SetLocalMultiShardModifyModeToSequential();
-}
-
-
-/********************************************************************************
- * Section with deparse functions
- *********************************************************************************/
-const char *
-deparse_create_type_stmt(Node *stmt)
-{
-	switch (stmt->type)
-	{
-		case T_CreateEnumStmt:
-		{
-			return deparse_create_enum_stmt(castNode(CreateEnumStmt, stmt));
-		}
-
-		case T_CompositeTypeStmt:
-		{
-			return deparse_composite_type_stmt(castNode(CompositeTypeStmt, stmt));
-		}
-
-		default:
-		{
-			ereport(ERROR, (errmsg("unsupported statement for deparse")));
-		}
-	}
-}
-
-
-/*
- * deparse_composite_type_stmt builds and returns a string representing the
- * CompositeTypeStmt for application on a remote server.
- */
-const char *
-deparse_composite_type_stmt(CompositeTypeStmt *stmt)
-{
-	StringInfoData sql = { 0 };
-	initStringInfo(&sql);
-
-	appendCompositeTypeStmt(&sql, stmt);
-
-	return sql.data;
-}
-
-
-const char *
-deparse_create_enum_stmt(CreateEnumStmt *stmt)
-{
-	StringInfoData sql = { 0 };
-	initStringInfo(&sql);
-
-	appendCreateEnumStmt(&sql, stmt);
-
-	return sql.data;
-}
-
-
-const char *
-deparse_alter_enum_stmt(AlterEnumStmt *stmt)
-{
-	StringInfoData sql = { 0 };
-	initStringInfo(&sql);
-
-	appendAlterEnumStmt(&sql, stmt);
-
-	return sql.data;
-}
-
-
-const char *
-deparse_drop_type_stmt(DropStmt *stmt)
-{
-	StringInfoData str = { 0 };
-	initStringInfo(&str);
-
-	Assert(stmt->removeType == OBJECT_TYPE);
-
-	appendDropTypeStmt(&str, stmt);
-
-	return str.data;
-}
-
-
-const char *
-deparse_alter_type_stmt(AlterTableStmt *stmt)
-{
-	StringInfoData str = { 0 };
-	initStringInfo(&str);
-
-	Assert(stmt->relkind == OBJECT_TYPE);
-
-	appendAlterTypeStmt(&str, stmt);
-
-	return str.data;
-}
-
-
-static void
-appendAlterTypeStmt(StringInfo buf, AlterTableStmt *stmt)
-{
-	TypeName *typeName = makeTypeNameFromRangeVar(stmt->relation);
-	Oid typeOid = LookupTypeNameOid(NULL, typeName, false);
-	const char *identifier = format_type_be_qualified(typeOid);
-	ListCell *cmdCell = NULL;
-
-	Assert(stmt->relkind = OBJECT_TYPE);
-
-	appendStringInfo(buf, "ALTER TYPE %s", identifier);
-	foreach(cmdCell, stmt->cmds)
-	{
-		AlterTableCmd *alterTableCmd = NULL;
-
-		if (cmdCell != list_head(stmt->cmds))
-		{
-			appendStringInfoString(buf, ", ");
-		}
-
-		alterTableCmd = castNode(AlterTableCmd, lfirst(cmdCell));
-		appendAlterTypeCmd(buf, alterTableCmd);
-	}
-
-	appendStringInfoString(buf, ";");
-}
-
-
-static void
-appendAlterTypeCmd(StringInfo buf, AlterTableCmd *alterTableCmd)
-{
-	switch (alterTableCmd->subtype)
-	{
-		case AT_AddColumn:
-		{
-			appendAlterTypeCmdAddColumn(buf, alterTableCmd);
-			break;
-		}
-
-		case AT_DropColumn:
-		{
-			appendAlterTypeCmdDropColumn(buf, alterTableCmd);
-			break;
-		}
-
-		case AT_AlterColumnType:
-		{
-			appendAlterTypeCmdAlterColumnType(buf, alterTableCmd);
-			break;
-		}
-
-		default:
-		{
-			ereport(ERROR, (errmsg("unsupported subtype for alter table command"),
-							errdetail("sub command type: %d", alterTableCmd->subtype)));
-		}
-	}
-}
-
-
-static void
-appendAlterTypeCmdAddColumn(StringInfo buf, AlterTableCmd *alterTableCmd)
-{
-	Assert(alterTableCmd->subtype == AT_AddColumn);
-
-	appendStringInfoString(buf, " ADD ATTRIBUTE ");
-	appendColumnDef(buf, castNode(ColumnDef, alterTableCmd->def));
-}
-
-
-static void
-appendAlterTypeCmdDropColumn(StringInfo buf, AlterTableCmd *alterTableCmd)
-{
-	Assert(alterTableCmd->subtype == AT_DropColumn);
-	appendStringInfo(buf, " DROP ATTRIBUTE %s", quote_identifier(alterTableCmd->name));
-
-	if (alterTableCmd->behavior == DROP_CASCADE)
-	{
-		appendStringInfoString(buf, " CASCADE");
-	}
-}
-
-
-static void
-appendAlterTypeCmdAlterColumnType(StringInfo buf, AlterTableCmd *alterTableCmd)
-{
-	Assert(alterTableCmd->subtype == AT_AlterColumnType);
-	appendStringInfo(buf, " ALTER ATTRIBUTE %s SET DATA TYPE ", quote_identifier(
-						 alterTableCmd->name));
-	appendColumnDef(buf, castNode(ColumnDef, alterTableCmd->def));
-
-	if (alterTableCmd->behavior == DROP_CASCADE)
-	{
-		appendStringInfoString(buf, " CASCADE");
-	}
-}
-
-
-static void
-appendAlterEnumStmt(StringInfo buf, AlterEnumStmt *stmt)
-{
-	TypeName *typeName = makeTypeNameFromNameList(stmt->typeName);
-	Oid typeOid = LookupTypeNameOid(NULL, typeName, false);
-	const char *identifier = format_type_be_qualified(typeOid);
-
-	appendStringInfo(buf, "ALTER TYPE %s", identifier);
-
-	if (AlterEnumIsRename(stmt))
-	{
-		/* Rename an existing label */
-		appendStringInfo(buf, " RENAME VALUE %s TO %s;",
-						 quote_literal_cstr(stmt->oldVal),
-						 quote_literal_cstr(stmt->newVal));
-	}
-	else if (AlterEnumIsAddValue(stmt))
-	{
-		/* Add a new label */
-		appendStringInfoString(buf, " ADD VALUE ");
-		if (stmt->skipIfNewValExists)
-		{
-			appendStringInfoString(buf, "IF NOT EXISTS ");
-		}
-		appendStringInfoString(buf, quote_literal_cstr(stmt->newVal));
-
-		if (stmt->newValNeighbor)
-		{
-			appendStringInfo(buf, " %s %s",
-							 stmt->newValIsAfter ? "AFTER" : "BEFORE",
-							 quote_literal_cstr(stmt->newValNeighbor));
-		}
-
-		appendStringInfoString(buf, ";");
-	}
-}
-
-
-static void
-appendDropTypeStmt(StringInfo buf, DropStmt *stmt)
-{
-	/*
-	 * already tested at call site, but for future it might be collapsed in a
-	 * deparse_drop_stmt so be safe and check again
-	 */
-	Assert(stmt->removeType == OBJECT_TYPE);
-
-	appendStringInfo(buf, "DROP TYPE ");
-	appendTypeNameList(buf, stmt->objects);
-	if (stmt->behavior == DROP_CASCADE)
-	{
-		appendStringInfoString(buf, " CASCADE");
-	}
-	appendStringInfoString(buf, ";");
-}
-
-
-static void
-appendTypeNameList(StringInfo buf, List *objects)
-{
-	ListCell *objectCell = NULL;
-	foreach(objectCell, objects)
-	{
-		TypeName *typeName = castNode(TypeName, lfirst(objectCell));
-		Oid typeOid = LookupTypeNameOid(NULL, typeName, false);
-		const char *identifier = format_type_be_qualified(typeOid);
-
-		if (objectCell != list_head(objects))
-		{
-			appendStringInfo(buf, ", ");
-		}
-
-		appendStringInfoString(buf, identifier);
-	}
-}
-
-
-/*
- * appendCompositeTypeStmt appends the sql string to recreate a CompositeTypeStmt to the
- * provided buffer, ending in a ; for concatination of multiple statements.
- */
-static void
-appendCompositeTypeStmt(StringInfo str, CompositeTypeStmt *stmt)
-{
-	const char *identifier = quote_qualified_identifier(stmt->typevar->schemaname,
-														stmt->typevar->relname);
-	appendStringInfo(str, "CREATE TYPE %s AS (", identifier);
-	appendColumnDefList(str, stmt->coldeflist);
-	appendStringInfo(str, ");");
-}
-
-
-static void
-appendCreateEnumStmt(StringInfo str, CreateEnumStmt *stmt)
-{
-	RangeVar *typevar = NULL;
-	const char *identifier = NULL;
-
-	/* extract the name from the statement and make fully qualified as a rangevar */
-	typevar = makeRangeVarFromNameList(stmt->typeName);
-	makeRangeVarQualified(typevar);
-
-	/* create the identifier from the fully qualified rangevar */
-	identifier = quote_qualified_identifier(typevar->schemaname, typevar->relname);
-
-	appendStringInfo(str, "CREATE TYPE %s AS ENUM (", identifier);
-	appendStringList(str, stmt->vals);
-	appendStringInfo(str, ");");
-}
-
-
-static void
-appendStringList(StringInfo str, List *strings)
-{
-	ListCell *stringCell = NULL;
-	foreach(stringCell, strings)
-	{
-		const char *string = strVal(lfirst(stringCell));
-		if (stringCell != list_head(strings))
-		{
-			appendStringInfoString(str, ", ");
-		}
-
-		string = quote_literal_cstr(string);
-		appendStringInfoString(str, string);
-	}
-}
-
-
-/*
- * appendColumnDefList appends the definition of a list of ColumnDef items to the provided
- * buffer, adding separators as necessary.
- */
-static void
-appendColumnDefList(StringInfo str, List *columnDefs)
-{
-	ListCell *columnDefCell = NULL;
-	foreach(columnDefCell, columnDefs)
-	{
-		if (columnDefCell != list_head(columnDefs))
-		{
-			appendStringInfoString(str, ", ");
-		}
-		appendColumnDef(str, castNode(ColumnDef, lfirst(columnDefCell)));
-	}
-}
-
-
-/*
- * appendColumnDef appends the definition of one ColumnDef completely qualified to the
- * provided buffer.
- *
- * If the colname is not set that part is ommitted. This is the case in alter column type
- * statements.
- */
-static void
-appendColumnDef(StringInfo str, ColumnDef *columnDef)
-{
-	Oid typeOid = LookupTypeNameOid(NULL, columnDef->typeName, false);
-	Oid collationOid = GetColumnDefCollation(NULL, columnDef, typeOid);
-
-	Assert(!columnDef->is_not_null); /* not null is not supported on composite types */
-
-	if (columnDef->colname)
-	{
-		appendStringInfo(str, "%s ", columnDef->colname);
-	}
-
-	appendStringInfo(str, "%s", format_type_be_qualified(typeOid));
-
-	if (OidIsValid(collationOid))
-	{
-		const char *identifier = format_collate_be_qualified(collationOid);
-		appendStringInfo(str, " COLLATE %s", identifier);
-	}
 }

@@ -28,6 +28,7 @@
 
 #include "distributed/commands.h"
 #include "distributed/commands/utility_hook.h"
+#include "distributed/deparser.h"
 #include "distributed/worker_protocol.h"
 
 PG_FUNCTION_INFO_V1(worker_create_if_not_exists);

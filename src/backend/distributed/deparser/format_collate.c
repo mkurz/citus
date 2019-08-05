@@ -1,10 +1,9 @@
 /*-------------------------------------------------------------------------
  *
- * collate.c
- *    Commands for COLLATE statements. (not-implemented)
+ * format_collate.c
+ *    Display collate names "nicely".
  *
- *    This file now contains the functions to help when collate objects
- *    need to be formatted. Used by TYPE commands.
+ *    This file is modeled after postgres' utils/adt/format_*.c files
  *
  * Copyright (c) 2019, Citus Data, Inc.
  *
@@ -20,7 +19,7 @@
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
 
-#include "distributed/commands.h"
+#include "distributed/deparser.h"
 
 /*
  * This version is for use within the backend in error messages, etc.
