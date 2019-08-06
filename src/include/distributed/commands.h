@@ -134,6 +134,12 @@ extern List * PlanCreateEnumStmt(CreateEnumStmt *createEnumStmt, const char *que
 extern List * PlanAlterEnumStmt(AlterEnumStmt *stmt, const char *queryString);
 extern List * PlanDropTypeStmt(DropStmt *stmt, const char *queryString);
 
+/* function.c - forward declarations */
+extern List * PlanAlterFunctionStmt(AlterFunctionStmt *alterFunctionStatement,
+									const char *alterFunctionCommand);
+extern List * PlanDropFunctionStmt(DropStmt *dropFunctionStatement,
+								   const char *dropFunctionCommand);
+
 /* vacuum.c - froward declarations */
 extern void ProcessVacuumStmt(VacuumStmt *vacuumStmt, const char *vacuumCommand);
 
