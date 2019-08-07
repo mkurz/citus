@@ -74,7 +74,6 @@ static List * enum_vals_list(Oid typeOid);
 List *
 PlanCompositeTypeStmt(CompositeTypeStmt *stmt, const char *queryString)
 {
-	Oid schemaId = InvalidOid;
 	const char *compositeTypeStmtSql = NULL;
 	TypeName *typeName = NULL;
 	Oid typeOid = InvalidOid;
@@ -97,9 +96,12 @@ PlanCompositeTypeStmt(CompositeTypeStmt *stmt, const char *queryString)
 
 	makeRangeVarQualified(stmt->typevar);
 
-	/* make sure the namespace used for the creation of the type exists on all workers */
-	schemaId = RangeVarGetCreationNamespace(stmt->typevar);
-	EnsureSchemaExistsOnAllNodes(schemaId);
+	/* find object address of just created object */
+	typeName = makeTypeNameFromRangeVar(stmt->typevar);
+	typeOid = LookupTypeNameOid(NULL, typeName, false);
+	ObjectAddressSet(typeAddress, TypeRelationId, typeOid);
+
+	EnsureDependenciesExistsOnAllNodes(&typeAddress);
 
 	/* reconstruct creation statement in a portable fashion */
 	compositeTypeStmtSql = deparse_composite_type_stmt(stmt);
@@ -114,9 +116,6 @@ PlanCompositeTypeStmt(CompositeTypeStmt *stmt, const char *queryString)
 	SendCommandToWorkersAsUser(ALL_WORKERS, compositeTypeStmtSql, NULL);
 
 	/* mark object as distributed in catalog table */
-	typeName = makeTypeNameFromRangeVar(stmt->typevar);
-	typeOid = LookupTypeNameOid(NULL, typeName, false);
-	ObjectAddressSet(typeAddress, TypeRelationId, typeOid);
 	recordObjectDistributedByAddress(&typeAddress);
 
 	return NULL;
@@ -173,8 +172,6 @@ PlanAlterTypeStmt(AlterTableStmt *stmt, const char *queryString)
 List *
 PlanCreateEnumStmt(CreateEnumStmt *stmt, const char *queryString)
 {
-	Oid schemaId = InvalidOid;
-	char *objname = NULL;
 	const char *createEnumStmtSql = NULL;
 	RangeVar *var = NULL;
 	ObjectAddress typeAddress = { 0 };
@@ -204,9 +201,12 @@ PlanCreateEnumStmt(CreateEnumStmt *stmt, const char *queryString)
 		stmt->typeName = list_make2(var->schemaname, var->relname);
 	}
 
-	/* make sure the namespace used for the creation of the type exists on all workers */
-	schemaId = QualifiedNameGetCreationNamespace(stmt->typeName, &objname);
-	EnsureSchemaExistsOnAllNodes(schemaId);
+	/* lookup type address of just created type */
+	typeName = makeTypeNameFromNameList(stmt->typeName);
+	typeOid = LookupTypeNameOid(NULL, typeName, false);
+	ObjectAddressSet(typeAddress, TypeRelationId, typeOid);
+
+	EnsureDependenciesExistsOnAllNodes(&typeAddress);
 
 	/* reconstruct creation statement in a portable fashion */
 	createEnumStmtSql = deparse_create_enum_stmt(stmt);
@@ -220,9 +220,6 @@ PlanCreateEnumStmt(CreateEnumStmt *stmt, const char *queryString)
 	SendCommandToWorkersAsUser(ALL_WORKERS, createEnumStmtSql, NULL);
 
 	/* mark the type as distributed */
-	typeName = makeTypeNameFromNameList(stmt->typeName);
-	typeOid = LookupTypeNameOid(NULL, typeName, false);
-	ObjectAddressSet(typeAddress, TypeRelationId, typeOid);
 	recordObjectDistributedByAddress(&typeAddress);
 
 	return NULL;
