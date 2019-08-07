@@ -35,7 +35,8 @@
 #include "utils/syscache.h"
 #include "utils/typcache.h"
 
-#include "distributed/catalog/distobjectaddress.h"
+#include "distributed/dist_catalog/distobjectaddress.h"
+#include "distributed/dist_catalog/namespace.h"
 #include "distributed/commands.h"
 #include "distributed/commands/utility_hook.h"
 #include "distributed/deparser.h"
@@ -53,6 +54,7 @@
 
 #define CREATE_IF_NOT_EXISTS_COMMAND "SELECT worker_create_if_not_exists(%s);"
 #define ALTER_TYPE_OWNER_COMMAND "ALTER TYPE %s OWNER TO %s;"
+#define CREATE_OR_REPLACE_COMMAND "SELECT worker_create_or_replace(%s);"
 
 
 /* forward declaration for helper functions*/
@@ -62,7 +64,7 @@ static List * TypeNameListToObjectAddresses(List *objects);
 static TypeName * makeTypeNameFromRangeVar(const RangeVar *relation);
 static void EnsureSequentialModeForTypeDDL(void);
 static Oid get_typowner(Oid typid);
-
+static const char * wrap_in_sql(const char *fmt, const char *sql);
 
 /* recreate functions */
 static CompositeTypeStmt * RecreateCompositeTypeStmt(Oid typeOid);
@@ -107,6 +109,7 @@ PlanCompositeTypeStmt(CompositeTypeStmt *stmt, const char *queryString)
 	compositeTypeStmtSql = deparse_composite_type_stmt(stmt);
 	ereport(DEBUG3, (errmsg("deparsed composite type statement"),
 					 errdetail("sql: %s", compositeTypeStmtSql)));
+	compositeTypeStmtSql = wrap_in_sql(CREATE_OR_REPLACE_COMMAND, compositeTypeStmtSql);
 
 
 	/* to prevent recursion with mx we disable ddl propagation */
@@ -212,6 +215,7 @@ PlanCreateEnumStmt(CreateEnumStmt *stmt, const char *queryString)
 	createEnumStmtSql = deparse_create_enum_stmt(stmt);
 	ereport(DEBUG3, (errmsg("deparsed enum type statement"),
 					 errdetail("sql: %s", createEnumStmtSql)));
+	createEnumStmtSql = wrap_in_sql(CREATE_OR_REPLACE_COMMAND, createEnumStmtSql);
 
 	/* to prevent recursion with mx we disable ddl propagation */
 	/* TODO, mx expects the extension owner to be used here, this requires an alter owner statement as well */
@@ -519,6 +523,31 @@ EnumTypeExists(CreateEnumStmt *stmt)
 }
 
 
+DropStmt *
+CompositeTypeStmtToDrop(CompositeTypeStmt *stmt)
+{
+	List *names = makeNameListFromRangeVar(stmt->typevar);
+	TypeName *typeName = makeTypeNameFromNameList(names);
+
+	DropStmt *dropStmt = makeNode(DropStmt);
+	dropStmt->removeType = OBJECT_TYPE;
+	dropStmt->objects = list_make1(typeName);
+	return dropStmt;
+}
+
+
+DropStmt *
+CreateEnumStmtToDrop(CreateEnumStmt *stmt)
+{
+	TypeName *typeName = makeTypeNameFromNameList(stmt->typeName);
+
+	DropStmt *dropStmt = makeNode(DropStmt);
+	dropStmt->removeType = OBJECT_TYPE;
+	dropStmt->objects = list_make1(typeName);
+	return dropStmt;
+}
+
+
 List *
 CreateTypeDDLCommandsIdempotent(const ObjectAddress *typeAddress)
 {
@@ -534,14 +563,12 @@ CreateTypeDDLCommandsIdempotent(const ObjectAddress *typeAddress)
 
 	/* capture ddl command for recreation and wrap in create if not exists construct */
 	ddlCommand = deparse_create_type_stmt(stmt);
-	ddlCommand = quote_literal_cstr(ddlCommand);
-	initStringInfo(&buf);
-	appendStringInfo(&buf, CREATE_IF_NOT_EXISTS_COMMAND, ddlCommand);
-	ddlCommands = lappend(ddlCommands, pstrdup(buf.data));
+	ddlCommand = wrap_in_sql(CREATE_IF_NOT_EXISTS_COMMAND, ddlCommand);
+	ddlCommands = lappend(ddlCommands, (void *) ddlCommand);
 
 	/* add owner ship change so the creation command can be run as a different user */
 	username = GetUserNameFromId(get_typowner(typeAddress->objectId), false);
-	resetStringInfo(&buf);
+	initStringInfo(&buf);
 	appendStringInfo(&buf, ALTER_TYPE_OWNER_COMMAND, getObjectIdentity(typeAddress),
 					 quote_identifier(username));
 
@@ -552,6 +579,14 @@ CreateTypeDDLCommandsIdempotent(const ObjectAddress *typeAddress)
 /********************************************************************************
  * Section with helper functions
  *********************************************************************************/
+const char *
+wrap_in_sql(const char *fmt, const char *sql)
+{
+	StringInfoData buf = { 0 };
+	initStringInfo(&buf);
+	appendStringInfo(&buf, fmt, quote_literal_cstr(sql));
+	return buf.data;
+}
 
 
 /*

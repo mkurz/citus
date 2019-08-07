@@ -25,8 +25,9 @@
 #include "parser/parse_type.h"
 #include "utils/builtins.h"
 
-#include "distributed/deparser.h"
+#include "distributed/dist_catalog/namespace.h"
 #include "distributed/commands.h"
+#include "distributed/deparser.h"
 
 #define AlterEnumIsRename(stmt) (stmt->oldVal != NULL)
 #define AlterEnumIsAddValue(stmt) (stmt->oldVal == NULL)
@@ -50,7 +51,6 @@ static void appendAlterTypeCmdAddColumn(StringInfo buf, AlterTableCmd *alterTabl
 static void appendAlterTypeCmdDropColumn(StringInfo buf, AlterTableCmd *alterTableCmd);
 static void appendAlterTypeCmdAlterColumnType(StringInfo buf,
 											  AlterTableCmd *alterTableCmd);
-static List * makeNameListFromRangeVar(const RangeVar *var);
 
 /*
  * deparse_create_type_stmt deparses any type creation statement
@@ -295,6 +295,10 @@ appendDropTypeStmt(StringInfo buf, DropStmt *stmt)
 	Assert(stmt->removeType == OBJECT_TYPE);
 
 	appendStringInfo(buf, "DROP TYPE ");
+	if (stmt->missing_ok)
+	{
+		appendStringInfoString(buf, "IF EXISTS ");
+	}
 	appendTypeNameList(buf, stmt->objects);
 	if (stmt->behavior == DROP_CASCADE)
 	{
@@ -419,34 +423,5 @@ appendColumnDef(StringInfo str, ColumnDef *columnDef)
 	{
 		const char *identifier = format_collate_be_qualified(collationOid);
 		appendStringInfo(str, " COLLATE %s", identifier);
-	}
-}
-
-
-/*
- * makeNameListFromRangeVar makes a namelist from a RangeVar. Its behaviour should be the
- * exact opposite of postgres' makeRangeVarFromNameList.
- */
-static List *
-makeNameListFromRangeVar(const RangeVar *var)
-{
-	if (var->catalogname != NULL)
-	{
-		Assert(var->schemaname != NULL);
-		Assert(var->relname != NULL);
-		return list_make3(makeString(var->catalogname),
-						  makeString(var->schemaname),
-						  makeString(var->relname));
-	}
-	else if (var->schemaname != NULL)
-	{
-		Assert(var->relname != NULL);
-		return list_make2(makeString(var->schemaname),
-						  makeString(var->relname));
-	}
-	else
-	{
-		Assert(var->relname != NULL);
-		return list_make1(makeString(var->relname));
 	}
 }

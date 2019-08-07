@@ -128,6 +128,8 @@ extern List * PlanDropTypeStmt(DropStmt *stmt, const char *queryString);
 extern Node * RecreateTypeStatement(Oid typeOid);
 extern bool CompositeTypeExists(CompositeTypeStmt *stmt);
 extern bool EnumTypeExists(CreateEnumStmt *stmt);
+extern DropStmt * CompositeTypeStmtToDrop(CompositeTypeStmt *stmt);
+extern DropStmt * CreateEnumStmtToDrop(CreateEnumStmt *stmt);
 extern List * CreateTypeDDLCommandsIdempotent(const ObjectAddress *typeAddress);
 
 /* vacuum.c - froward declarations */

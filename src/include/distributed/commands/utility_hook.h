@@ -12,9 +12,10 @@
 
 #include "postgres.h"
 
-#include "distributed/version_compat.h"
 #include "utils/relcache.h"
 #include "tcop/utility.h"
+
+#include "distributed/version_compat.h"
 
 typedef enum
 {

@@ -21,8 +21,8 @@
 #include "utils/fmgroids.h"
 #include "utils/lsyscache.h"
 
-#include "distributed/catalog/dependency.h"
-#include "distributed/catalog/distobjectaddress.h"
+#include "distributed/dist_catalog/dependency.h"
+#include "distributed/dist_catalog/distobjectaddress.h"
 
 
 static bool ShouldFollowDependency(const ObjectAddress *toFollow);

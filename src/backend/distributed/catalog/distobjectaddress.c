@@ -28,8 +28,8 @@
 #include "utils/rel.h"
 #include "utils/builtins.h"
 
-#include "distributed/catalog/distobjectaddress.h"
-#include "distributed/catalog/pg_dist_object.h"
+#include "distributed/dist_catalog/distobjectaddress.h"
+#include "distributed/dist_catalog/pg_dist_object.h"
 #include "distributed/metadata_cache.h"
 
 
@@ -246,6 +246,11 @@ isObjectDistributed(const DistObjectAddress *distAddress)
 }
 
 
+/*
+ * citus_update_dist_object_oids updates the objid column of pg_dist_objects table with
+ * the current object id's based on the identifier of the object. This is done by a full
+ * table scan over all identifiers, then resolve these identifiers to their object id.
+ */
 Datum
 citus_update_dist_object_oids(PG_FUNCTION_ARGS)
 {

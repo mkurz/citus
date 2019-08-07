@@ -32,7 +32,73 @@
 #include "distributed/worker_protocol.h"
 
 PG_FUNCTION_INFO_V1(worker_create_if_not_exists);
+PG_FUNCTION_INFO_V1(worker_create_or_replace);
 PG_FUNCTION_INFO_V1(type_recreate_command);
+
+
+static bool object_from_create_exists(Node *parseTree);
+static DropStmt * drop_stmt_from_object_create(Node *createStmt);
+
+
+static bool
+object_from_create_exists(Node *parseTree)
+{
+	switch (parseTree->type)
+	{
+		case T_CompositeTypeStmt:
+		{
+			return CompositeTypeExists(castNode(CompositeTypeStmt, parseTree));
+		}
+
+		case T_CreateEnumStmt:
+		{
+			return EnumTypeExists(castNode(CreateEnumStmt, parseTree));
+		}
+
+		default:
+		{
+			/*
+			 * should not be reached, indicates the coordinator is sending unsupported
+			 * statements
+			 */
+			ereport(ERROR, (errmsg("unsupported statement to check existence for"),
+							errhint("The coordinator send an unsupported command to the "
+									"worker")));
+			return false;
+		}
+	}
+}
+
+
+static DropStmt *
+drop_stmt_from_object_create(Node *createStmt)
+{
+	switch (nodeTag(createStmt))
+	{
+		case T_CompositeTypeStmt:
+		{
+			return CompositeTypeStmtToDrop(castNode(CompositeTypeStmt, createStmt));
+		}
+
+		case T_CreateEnumStmt:
+		{
+			return CreateEnumStmtToDrop(castNode(CreateEnumStmt, createStmt));
+		}
+
+		default:
+		{
+			/*
+			 * should not be reached, indicates the coordinator is sending unsupported
+			 * statements
+			 */
+			ereport(ERROR, (errmsg("unsupported statement to check existence for"),
+							errhint("The coordinator send an unsupported command to the "
+									"worker")));
+			return false;
+		}
+	}
+}
+
 
 /*
  * worker_create_if_not_exists(sqlStatement text)
@@ -50,39 +116,49 @@ worker_create_if_not_exists(PG_FUNCTION_ARGS)
 
 	Node *parseTree = ParseTreeNode(sqlStatement);
 
-	switch (parseTree->type)
+	if (object_from_create_exists(parseTree))
 	{
-		case T_CompositeTypeStmt:
+		PG_RETURN_BOOL(false);
+	}
+
+	CitusProcessUtility(parseTree, sqlStatement, PROCESS_UTILITY_TOPLEVEL, NULL,
+						None_Receiver, NULL);
+
+	/* type has been created */
+	PG_RETURN_BOOL(true);
+}
+
+
+Datum
+worker_create_or_replace(PG_FUNCTION_ARGS)
+{
+	text *sqlStatementText = PG_GETARG_TEXT_P(0);
+	const char *sqlStatement = text_to_cstring(sqlStatementText);
+
+	Node *parseTree = ParseTreeNode(sqlStatement);
+
+	/*
+	 * since going to the drop statement might require some resolving we will do a check
+	 * if the type actually exists instead of adding the IF EXISTS keyword to the
+	 * statement.
+	 */
+	if (object_from_create_exists(parseTree))
+	{
+		DropStmt *dropStmtParseTree = NULL;
+
+		/*
+		 * there might be dependencies left on the worker on this type, these are not
+		 * managed by citus anyway so it should be ok to drop, thus we cascade to any such
+		 * dependencies
+		 */
+		dropStmtParseTree = drop_stmt_from_object_create(parseTree);
+		dropStmtParseTree->behavior = DROP_CASCADE;
+
+		if (dropStmtParseTree != NULL)
 		{
-			if (CompositeTypeExists(castNode(CompositeTypeStmt, parseTree)))
-			{
-				return BoolGetDatum(false);
-			}
-
-			/* type does not exist, fall through to create type */
-			break;
-		}
-
-		case T_CreateEnumStmt:
-		{
-			if (EnumTypeExists(castNode(CreateEnumStmt, parseTree)))
-			{
-				return BoolGetDatum(false);
-			}
-
-			/* type does not exist, fall through to create type */
-			break;
-		}
-
-		default:
-		{
-			/*
-			 * should not be reached, indicates the coordinator is sending unsupported
-			 * statements
-			 */
-			ereport(ERROR, (errmsg("unsupported create statement for "
-								   "worker_create_if_not_exists")));
-			return BoolGetDatum(false);
+			const char *sqlDropStmt = DeparseTreeNode((Node *) dropStmtParseTree);
+			CitusProcessUtility((Node *) dropStmtParseTree, sqlDropStmt,
+								PROCESS_UTILITY_TOPLEVEL, NULL, None_Receiver, NULL);
 		}
 	}
 
@@ -90,7 +166,7 @@ worker_create_if_not_exists(PG_FUNCTION_ARGS)
 						None_Receiver, NULL);
 
 	/* type has been created */
-	return BoolGetDatum(true);
+	PG_RETURN_BOOL(true);
 }
 
 

@@ -13,13 +13,13 @@
 #include "catalog/dependency.h"
 #include "catalog/objectaddress.h"
 
-#include "distributed/catalog/dependency.h"
+#include "distributed/dist_catalog/dependency.h"
 #include "distributed/connection_management.h"
 #include "distributed/worker_manager.h"
 #include "distributed/metadata_sync.h"
 #include "distributed/commands.h"
 #include "distributed/remote_commands.h"
-#include "distributed/catalog/distobjectaddress.h"
+#include "distributed/dist_catalog/distobjectaddress.h"
 
 static List * GetDependencyCreateDDLCommands(const ObjectAddress *dependency);
 

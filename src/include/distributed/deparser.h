@@ -25,6 +25,8 @@ extern char * format_collate_be_qualified(Oid type_oid);
 extern char * format_collate_extended(Oid collid, bits16 flags);
 
 
+extern const char * DeparseTreeNode(Node *stmt);
+
 extern const char * deparse_create_type_stmt(Node *stmt);
 extern const char * deparse_composite_type_stmt(CompositeTypeStmt *stmt);
 extern const char * deparse_create_enum_stmt(CreateEnumStmt *stmt);
