@@ -1508,8 +1508,6 @@ MasterAggregateExpression(Aggref *originalAggregate,
 	HeapTuple aggTuple;
 	Form_pg_aggregate aggform;
 	Oid combine;
-	Oid serial = InvalidOid;
-	Oid deserial = InvalidOid;
 
 	aggTuple = SearchSysCache1(AGGFNOID,
 							   ObjectIdGetDatum(originalAggregate->aggfnoid));
@@ -1523,11 +1521,6 @@ MasterAggregateExpression(Aggref *originalAggregate,
 	{
 		aggform = (Form_pg_aggregate) GETSTRUCT(aggTuple);
 		combine = aggform->aggcombinefn;
-		if (combine != InvalidOid && originalAggregate->aggtranstype == INTERNALOID)
-		{
-			serial = aggform->aggserialfn;
-			deserial = aggform->aggdeserialfn;
-		}
 		ReleaseSysCache(aggTuple);
 	}
 
@@ -1544,6 +1537,8 @@ MasterAggregateExpression(Aggref *originalAggregate,
 		int32 workerReturnTypeMod = -1;
 		Oid workerCollationId = InvalidOid;
 
+		elog(WARNING, "coord_combine_agg %d %d", coordCombineId,
+			 originalAggregate->aggfnoid);
 
 		aggparam = makeConst(OIDOID, -1, InvalidOid, sizeof(Oid), ObjectIdGetDatum(
 								 originalAggregate->aggfnoid), false, true);
@@ -2802,8 +2797,6 @@ WorkerAggregateExpressionList(Aggref *originalAggregate,
 	HeapTuple aggTuple;
 	Form_pg_aggregate aggform;
 	Oid combine;
-	Oid serial = InvalidOid;
-	Oid deserial = InvalidOid;
 
 	aggTuple = SearchSysCache1(AGGFNOID,
 							   ObjectIdGetDatum(originalAggregate->aggfnoid));
@@ -2817,11 +2810,6 @@ WorkerAggregateExpressionList(Aggref *originalAggregate,
 	{
 		aggform = (Form_pg_aggregate) GETSTRUCT(aggTuple);
 		combine = aggform->aggcombinefn;
-		if (combine != InvalidOid && originalAggregate->aggtranstype == INTERNALOID)
-		{
-			serial = aggform->aggserialfn;
-			deserial = aggform->aggdeserialfn;
-		}
 		ReleaseSysCache(aggTuple);
 	}
 
@@ -2834,6 +2822,8 @@ WorkerAggregateExpressionList(Aggref *originalAggregate,
 		Oid workerPartialId = AggregateFunctionOidWithoutInput(
 			WORKER_PARTIAL_AGGREGATE_NAME);
 
+		elog(WARNING, "worker_partial_agg %d %d", workerPartialId,
+			 originalAggregate->aggfnoid);
 		aggparam = makeConst(OIDOID, -1, InvalidOid, sizeof(Oid), ObjectIdGetDatum(
 								 originalAggregate->aggfnoid), false, true);
 		aggArguments = list_make1(makeTargetEntry((Expr *) aggparam, 1, NULL, false));
@@ -2848,7 +2838,7 @@ WorkerAggregateExpressionList(Aggref *originalAggregate,
 		/* worker_partial_agg(agg, ...args) */
 		newWorkerAggregate = makeNode(Aggref);
 		newWorkerAggregate->aggfnoid = workerPartialId;
-		newWorkerAggregate->aggtype = originalAggregate->aggtype;
+		newWorkerAggregate->aggtype = BYTEAOID;
 		newWorkerAggregate->args = aggArguments;
 		newWorkerAggregate->aggkind = AGGKIND_NORMAL;
 		newWorkerAggregate->aggfilter = originalAggregate->aggfilter;
