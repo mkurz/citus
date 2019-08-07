@@ -32,17 +32,27 @@
 typedef struct DistObjectAddress
 {
 	Oid classId;
+	Oid objectId;
 	const char *identifier;
 } DistObjectAddress;
 
+#define RowToDistObjectAddress(address, form) \
+	do { \
+		(addr).classId = (form).classid; \
+		(addr).objectId = (form).objid; \
+		(addr).classId = text_to_cstring(& ((form).identifier)); \
+	} while (0)
 
 extern DistObjectAddress * getDistObjectAddressFromPg(const ObjectAddress *address);
 extern ObjectAddress * getObjectAddresFromCitus(const DistObjectAddress *distAddress);
-extern DistObjectAddress * makeDistObjectAddress(Oid classid, const char *identifier);
+extern DistObjectAddress * makeDistObjectAddress(Oid classid, Oid objectid, const
+												 char *identifier);
 
 extern bool isObjectDistributedByAddress(const ObjectAddress *address);
 extern bool isObjectDistributed(const DistObjectAddress *distAddress);
 extern void recordObjectDistributedByAddress(const ObjectAddress *address);
 extern void recordObjectDistributed(const DistObjectAddress *distAddress);
+extern void dropObjectDistributedByAddress(const ObjectAddress *address);
+extern void dropObjectDistributed(const DistObjectAddress *distAddress);
 
 #endif /* CITUS_CATALOG_DISTOBJECTADDRESS_H */

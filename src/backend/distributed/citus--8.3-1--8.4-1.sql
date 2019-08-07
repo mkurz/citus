@@ -6,10 +6,15 @@ CREATE OR REPLACE FUNCTION worker_create_if_not_exists(statement text)
   LANGUAGE C STRICT
   AS 'MODULE_PATHNAME', $$worker_create_if_not_exists$$;
 
+CREATE OR REPLACE FUNCTION citus_update_dist_object_oids()
+  RETURNS bool
+  LANGUAGE C STRICT
+  AS 'MODULE_PATHNAME', $$citus_update_dist_object_oids$$;
+
 CREATE TABLE citus.pg_dist_object (
     classid oid NOT NULL,
+    objid oid NOT NULL,
     identifier text NOT NULL
 );
 
-ALTER TABLE citus.pg_dist_object SET SCHEMA pg_catalog;
-GRANT SELECT ON pg_catalog.pg_dist_object TO public;
+GRANT SELECT ON citus.pg_dist_object TO public;

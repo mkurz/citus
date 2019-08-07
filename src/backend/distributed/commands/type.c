@@ -58,6 +58,7 @@
 /* forward declaration for helper functions*/
 static void makeRangeVarQualified(RangeVar *var);
 static List * FilterNameListForDistributedTypes(List *objects);
+static List * TypeNameListToObjectAddresses(List *objects);
 static TypeName * makeTypeNameFromRangeVar(const RangeVar *relation);
 static void EnsureSequentialModeForTypeDDL(void);
 static Oid get_typowner(Oid typid);
@@ -75,7 +76,9 @@ PlanCompositeTypeStmt(CompositeTypeStmt *stmt, const char *queryString)
 {
 	Oid schemaId = InvalidOid;
 	const char *compositeTypeStmtSql = NULL;
-	const char *identifier = NULL;
+	TypeName *typeName = NULL;
+	Oid typeOid = InvalidOid;
+	ObjectAddress typeAddress = { 0 };
 
 	if (ExtensionStmtInProgess())
 	{
@@ -110,10 +113,11 @@ PlanCompositeTypeStmt(CompositeTypeStmt *stmt, const char *queryString)
 	SendCommandToWorkersAsUser(ALL_WORKERS, DISABLE_DDL_PROPAGATION, NULL);
 	SendCommandToWorkersAsUser(ALL_WORKERS, compositeTypeStmtSql, NULL);
 
-	/* mark the type as distributed */
-	identifier = quote_qualified_identifier(stmt->typevar->schemaname,
-											stmt->typevar->relname);
-	recordObjectDistributed(makeDistObjectAddress(TypeRelationId, identifier));
+	/* mark object as distributed in catalog table */
+	typeName = makeTypeNameFromRangeVar(stmt->typevar);
+	typeOid = LookupTypeNameOid(NULL, typeName, false);
+	ObjectAddressSet(typeAddress, TypeRelationId, typeOid);
+	recordObjectDistributedByAddress(&typeAddress);
 
 	return NULL;
 }
@@ -172,8 +176,10 @@ PlanCreateEnumStmt(CreateEnumStmt *stmt, const char *queryString)
 	Oid schemaId = InvalidOid;
 	char *objname = NULL;
 	const char *createEnumStmtSql = NULL;
-	const char *identifier = NULL;
 	RangeVar *var = NULL;
+	ObjectAddress typeAddress = { 0 };
+	Oid typeOid = InvalidOid;
+	TypeName *typeName = NULL;
 
 	if (ExtensionStmtInProgess())
 	{
@@ -214,8 +220,10 @@ PlanCreateEnumStmt(CreateEnumStmt *stmt, const char *queryString)
 	SendCommandToWorkersAsUser(ALL_WORKERS, createEnumStmtSql, NULL);
 
 	/* mark the type as distributed */
-	identifier = quote_qualified_identifier(var->schemaname, var->relname);
-	recordObjectDistributed(makeDistObjectAddress(TypeRelationId, identifier));
+	typeName = makeTypeNameFromNameList(stmt->typeName);
+	typeOid = LookupTypeNameOid(NULL, typeName, false);
+	ObjectAddressSet(typeAddress, TypeRelationId, typeOid);
+	recordObjectDistributedByAddress(&typeAddress);
 
 	return NULL;
 }
@@ -308,6 +316,8 @@ PlanDropTypeStmt(DropStmt *stmt, const char *queryString)
 	List *oldTypes = stmt->objects;
 	List *distributedTypes = NIL;
 	const char *dropStmtSql = NULL;
+	ListCell *addressCell = NULL;
+	List *distributedTypeAddresses = NIL;
 
 	if (ExtensionStmtInProgess())
 	{
@@ -347,6 +357,16 @@ PlanDropTypeStmt(DropStmt *stmt, const char *queryString)
 	EnsureSequentialModeForTypeDDL();
 	SendCommandToWorkersAsUser(ALL_WORKERS, DISABLE_DDL_PROPAGATION, NULL);
 	SendCommandToWorkersAsUser(ALL_WORKERS, dropStmtSql, NULL);
+
+	/*
+	 * remove the entries for the distributed objects on dropping
+	 */
+	distributedTypeAddresses = TypeNameListToObjectAddresses(distributedTypes);
+	foreach(addressCell, distributedTypeAddresses)
+	{
+		ObjectAddress *address = (ObjectAddress *) lfirst(addressCell);
+		dropObjectDistributedByAddress(address);
+	}
 
 	return NULL;
 }
@@ -560,6 +580,23 @@ FilterNameListForDistributedTypes(List *objects)
 		{
 			result = lappend(result, typeName);
 		}
+	}
+	return result;
+}
+
+
+static List *
+TypeNameListToObjectAddresses(List *objects)
+{
+	ListCell *objectCell = NULL;
+	List *result = NIL;
+	foreach(objectCell, objects)
+	{
+		TypeName *typeName = castNode(TypeName, lfirst(objectCell));
+		Oid typeOid = LookupTypeNameOid(NULL, typeName, false);
+		ObjectAddress *typeAddress = palloc0(sizeof(ObjectAddress));
+		ObjectAddressSet(*typeAddress, TypeRelationId, typeOid);
+		result = lappend(result, typeAddress);
 	}
 	return result;
 }

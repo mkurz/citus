@@ -121,6 +121,9 @@ extern void EnsureModificationsCanRun(void);
 extern HTAB * GetWorkerNodeHash(void);
 extern WorkerNode * LookupNodeByNodeId(uint32 nodeId);
 
+/* namespace oids */
+extern Oid CitusCatalogNamespaceId(void);
+
 /* relation oids */
 extern Oid DistColocationRelationId(void);
 extern Oid DistColocationConfigurationIndexId(void);

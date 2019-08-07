@@ -324,18 +324,6 @@ multi_ProcessUtility(PlannedStmt *pstmt,
 			}
 		}
 
-		if (IsA(parsetree, CompositeTypeStmt))
-		{
-			CompositeTypeStmt *compositeTypeStmt = (CompositeTypeStmt *) parsetree;
-			ddlJobs = PlanCompositeTypeStmt(compositeTypeStmt, queryString);
-		}
-
-		if (IsA(parsetree, CreateEnumStmt))
-		{
-			CreateEnumStmt *createEnumStmt = (CreateEnumStmt *) parsetree;
-			ddlJobs = PlanCreateEnumStmt(createEnumStmt, queryString);
-		}
-
 		if (IsA(parsetree, AlterEnumStmt))
 		{
 			AlterEnumStmt *alterEnumStmt = (AlterEnumStmt *) parsetree;
@@ -498,6 +486,24 @@ multi_ProcessUtility(PlannedStmt *pstmt,
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
+
+	/*
+	 * Post process for ddl statements
+	 */
+	if (EnableDDLPropagation)
+	{
+		if (IsA(parsetree, CompositeTypeStmt))
+		{
+			CompositeTypeStmt *compositeTypeStmt = (CompositeTypeStmt *) parsetree;
+			PlanCompositeTypeStmt(compositeTypeStmt, queryString);
+		}
+
+		if (IsA(parsetree, CreateEnumStmt))
+		{
+			CreateEnumStmt *createEnumStmt = (CreateEnumStmt *) parsetree;
+			PlanCreateEnumStmt(createEnumStmt, queryString);
+		}
+	}
 
 	/*
 	 * We only process CREATE TABLE ... PARTITION OF commands in the function below

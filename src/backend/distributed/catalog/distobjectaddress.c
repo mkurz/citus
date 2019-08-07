@@ -33,6 +33,9 @@
 #include "distributed/metadata_cache.h"
 
 
+PG_FUNCTION_INFO_V1(citus_update_dist_object_oids);
+
+
 /*
  * getDistObjectAddressFromPg maps a postgres object address to a citus distributed object
  * address.
@@ -43,6 +46,7 @@ getDistObjectAddressFromPg(const ObjectAddress *address)
 	DistObjectAddress *distAddress = palloc0(sizeof(DistObjectAddress));
 
 	distAddress->classId = address->classId;
+	distAddress->objectId = address->objectId;
 	distAddress->identifier = getObjectIdentity(address);
 
 	return distAddress;
@@ -104,10 +108,11 @@ getObjectAddresFromCitus(const DistObjectAddress *distAddress)
  * classId and identifier passed. No checks are performed to verify the object exists.
  */
 DistObjectAddress *
-makeDistObjectAddress(Oid classid, const char *identifier)
+makeDistObjectAddress(Oid classid, Oid objectid, const char *identifier)
 {
 	DistObjectAddress *distAddress = palloc0(sizeof(DistObjectAddress));
 	distAddress->classId = classid;
+	distAddress->objectId = objectid;
 	distAddress->identifier = pstrdup(identifier);
 	return distAddress;
 }
@@ -144,6 +149,7 @@ recordObjectDistributed(const DistObjectAddress *distAddress)
 	memset(newNulls, false, sizeof(newNulls));
 
 	newValues[Anum_pg_dist_object_classid - 1] = ObjectIdGetDatum(distAddress->classId);
+	newValues[Anum_pg_dist_object_objid - 1] = ObjectIdGetDatum(distAddress->objectId);
 	newValues[Anum_pg_dist_object_identifier - 1] = CStringGetTextDatum(
 		distAddress->identifier);
 
@@ -154,6 +160,41 @@ recordObjectDistributed(const DistObjectAddress *distAddress)
 
 	CommandCounterIncrement();
 	heap_close(pgDistObject, NoLock);
+}
+
+
+void
+dropObjectDistributedByAddress(const ObjectAddress *address)
+{
+	dropObjectDistributed(getDistObjectAddressFromPg(address));
+}
+
+
+void
+dropObjectDistributed(const DistObjectAddress *distAddress)
+{
+	Relation pgDistObjectRel = NULL;
+	ScanKeyData key[2] = { 0 };
+	SysScanDesc pgDistObjectScan = NULL;
+	HeapTuple pgDistObjectTup = NULL;
+
+	pgDistObjectRel = heap_open(DistObjectRelationId(), RowExclusiveLock);
+
+	/* scan pg_dist_object for classid = $1 AND identifier = $2 */
+	ScanKeyInit(&key[0], Anum_pg_dist_object_classid, BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(distAddress->classId));
+	ScanKeyInit(&key[1], Anum_pg_dist_object_identifier, BTEqualStrategyNumber, F_TEXTEQ,
+				CStringGetTextDatum(distAddress->identifier));
+	pgDistObjectScan = systable_beginscan(pgDistObjectRel, InvalidOid, false, NULL, 2,
+										  key);
+
+	while (HeapTupleIsValid(pgDistObjectTup = systable_getnext(pgDistObjectScan)))
+	{
+		CatalogTupleDelete(pgDistObjectRel, &pgDistObjectTup->t_self);
+	}
+
+	systable_endscan(pgDistObjectScan);
+	relation_close(pgDistObjectRel, RowExclusiveLock);
 }
 
 
@@ -193,7 +234,7 @@ isObjectDistributed(const DistObjectAddress *distAddress)
 
 	while (HeapTupleIsValid(pgDistObjectTup = systable_getnext(pgDistObjectScan)))
 	{
-		/* tuplpe found, we are done */
+		/* tuple found, we are done */
 		result = true;
 		break;
 	}
@@ -202,4 +243,63 @@ isObjectDistributed(const DistObjectAddress *distAddress)
 	relation_close(pgDistObjectRel, AccessShareLock);
 
 	return result;
+}
+
+
+Datum
+citus_update_dist_object_oids(PG_FUNCTION_ARGS)
+{
+	Relation pgDistObject = NULL;
+	SysScanDesc scanDescriptor = NULL;
+	ScanKeyData scanKey[0];
+	int scanKeyCount = 0;
+	HeapTuple heapTuple = NULL;
+	HeapTuple newHeapTuple = NULL;
+	TupleDesc tupleDescriptor = NULL;
+
+	Datum values[Natts_pg_dist_object];
+	bool isnull[Natts_pg_dist_object];
+	bool replace[Natts_pg_dist_object];
+	Datum datumArray[Natts_pg_dist_object];
+
+	/* we first search for colocation group by its colocation id */
+	pgDistObject = heap_open(DistObjectRelationId(), RowExclusiveLock);
+	tupleDescriptor = RelationGetDescr(pgDistObject);
+
+	scanDescriptor = systable_beginscan(pgDistObject, InvalidOid, false, NULL,
+										scanKeyCount, scanKey);
+
+	while (HeapTupleIsValid(heapTuple = systable_getnext(scanDescriptor)))
+	{
+		heap_deform_tuple(heapTuple, tupleDescriptor, datumArray, isnull);
+
+		/* after we find colocation group, we update it with new values */
+		memset(replace, false, sizeof(replace));
+		memset(isnull, false, sizeof(isnull));
+		memset(values, 0, sizeof(values));
+
+		DistObjectAddress distAddress = {
+			.classId = DatumGetObjectId(datumArray[Anum_pg_dist_object_classid - 1]),
+			.objectId = DatumGetObjectId(datumArray[Anum_pg_dist_object_objid - 1]),
+			.identifier =
+				TextDatumGetCString(datumArray[Anum_pg_dist_object_identifier - 1]),
+		};
+
+		ObjectAddress *address = getObjectAddresFromCitus(&distAddress);
+
+		values[Anum_pg_dist_object_objid - 1] = ObjectIdGetDatum(address->objectId);
+		replace[Anum_pg_dist_object_objid - 1] = true;
+
+		newHeapTuple = heap_modify_tuple(heapTuple, tupleDescriptor, values, isnull,
+										 replace);
+		CatalogTupleUpdate(pgDistObject, &newHeapTuple->t_self, newHeapTuple);
+		heap_freetuple(newHeapTuple);
+	}
+
+	CommandCounterIncrement();
+
+	systable_endscan(scanDescriptor);
+	heap_close(pgDistObject, NoLock);
+
+	PG_RETURN_NULL();
 }
