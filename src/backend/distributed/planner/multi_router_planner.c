@@ -57,9 +57,9 @@
 #include "optimizer/joininfo.h"
 #include "optimizer/pathnode.h"
 #include "optimizer/paths.h"
-#include "optimizer/predtest.h"
+#include "compat/optimizer/predtest.h"
 #include "optimizer/restrictinfo.h"
-#include "optimizer/var.h"
+#include "compat/optimizer/var.h"
 #include "parser/parsetree.h"
 #include "parser/parse_oper.h"
 #include "storage/lock.h"
@@ -676,7 +676,11 @@ ModifyQuerySupported(Query *queryTree, Query *originalQuery, bool multiShardQuer
 									 NULL, NULL);
 			}
 		}
-		else if (rangeTableEntry->rtekind == RTE_VALUES)
+		else if (rangeTableEntry->rtekind == RTE_VALUES
+#if PG_VERSION_NUM >= 120000
+				 || rangeTableEntry->rtekind == RTE_RESULT
+#endif
+				 )
 		{
 			/* do nothing, this type is supported */
 		}

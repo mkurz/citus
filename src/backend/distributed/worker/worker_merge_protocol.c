@@ -17,7 +17,17 @@
 #include "funcapi.h"
 #include "miscadmin.h"
 
+#if PG_VERSION_NUM >= 120000
+#include "access/genam.h"
+#endif
 #include "access/htup_details.h"
+#if PG_VERSION_NUM >= 120000
+#include "access/table.h"
+#define heap_beginscan_catalog table_beginscan_catalog
+#define TableHeapScanDesc TableScanDesc
+#else
+#define TableHeapScanDesc HeapScanDesc
+#endif
 #include "access/xact.h"
 #include "catalog/dependency.h"
 #include "catalog/pg_namespace.h"
@@ -35,7 +45,6 @@
 #include "utils/builtins.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
-#include "utils/tqual.h"
 
 
 /* Local functions forward declarations */
@@ -263,7 +272,7 @@ Datum
 worker_cleanup_job_schema_cache(PG_FUNCTION_ARGS)
 {
 	Relation pgNamespace = NULL;
-	HeapScanDesc scanDescriptor = NULL;
+	TableHeapScanDesc scanDescriptor = NULL;
 	ScanKey scanKey = NULL;
 	int scanKeyCount = 0;
 	HeapTuple heapTuple = NULL;
@@ -362,7 +371,8 @@ RemoveJobSchema(StringInfo schemaName)
 	Datum schemaNameDatum = CStringGetDatum(schemaName->data);
 	Oid schemaId = InvalidOid;
 
-	schemaId = GetSysCacheOid(NAMESPACENAME, schemaNameDatum, 0, 0, 0);
+	schemaId = GetSysCacheOid1Compat(NAMESPACENAME, Anum_pg_namespace_oid,
+									 schemaNameDatum);
 	if (OidIsValid(schemaId))
 	{
 		ObjectAddress schemaObject = { 0, 0, 0 };
