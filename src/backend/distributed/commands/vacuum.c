@@ -9,8 +9,11 @@
  */
 
 #include "postgres.h"
-#include "c.h"
 
+#if PG_VERSION_NUM >= 120000
+#include "commands/defrem.h"
+#endif
+#include "commands/vacuum.h"
 #include "distributed/commands.h"
 #include "distributed/commands/utility_hook.h"
 #include "distributed/metadata_cache.h"
@@ -24,11 +27,11 @@
 
 
 /* Local functions forward declarations for processing distributed table commands */
-static bool IsDistributedVacuumStmt(VacuumStmt *vacuumStmt, List *vacuumRelationIdList);
+static bool IsDistributedVacuumStmt(int vacuumOptions, List *vacuumRelationIdList);
 static List * VacuumTaskList(Oid relationId, int vacuumOptions, List *vacuumColumnList);
 static StringInfo DeparseVacuumStmtPrefix(int vacuumFlags);
 static char * DeparseVacuumColumnNames(List *columnNameList);
-
+static int VacuumStmt_options(VacuumStmt *vacstmt);
 
 /*
  * ProcessVacuumStmt processes vacuum statements that may need propagation to
@@ -49,7 +52,8 @@ ProcessVacuumStmt(VacuumStmt *vacuumStmt, const char *vacuumCommand)
 	ListCell *vacuumRelationCell = NULL;
 	List *relationIdList = NIL;
 	ListCell *relationIdCell = NULL;
-	LOCKMODE lockMode = (vacuumStmt->options & VACOPT_FULL) ? AccessExclusiveLock :
+	int vacuumOptions = VacuumStmt_options(vacuumStmt);
+	LOCKMODE lockMode = (vacuumOptions & VACOPT_FULL) ? AccessExclusiveLock :
 						ShareUpdateExclusiveLock;
 	int executedVacuumCount = 0;
 
@@ -60,7 +64,7 @@ ProcessVacuumStmt(VacuumStmt *vacuumStmt, const char *vacuumCommand)
 		relationIdList = lappend_oid(relationIdList, relationId);
 	}
 
-	distributedVacuumStmt = IsDistributedVacuumStmt(vacuumStmt, relationIdList);
+	distributedVacuumStmt = IsDistributedVacuumStmt(vacuumOptions, relationIdList);
 	if (!distributedVacuumStmt)
 	{
 		return;
@@ -81,7 +85,7 @@ ProcessVacuumStmt(VacuumStmt *vacuumStmt, const char *vacuumCommand)
 			 * commands can run inside a transaction block. Notice that we do this
 			 * once even if there are multiple distributed tables to be vacuumed.
 			 */
-			if (executedVacuumCount == 0 && (vacuumStmt->options & VACOPT_VACUUM) != 0)
+			if (executedVacuumCount == 0 && (vacuumOptions & VACOPT_VACUUM) != 0)
 			{
 				/* save old commit protocol to restore at xact end */
 				Assert(SavedMultiShardCommitProtocol == COMMIT_PROTOCOL_BARE);
@@ -90,7 +94,7 @@ ProcessVacuumStmt(VacuumStmt *vacuumStmt, const char *vacuumCommand)
 			}
 
 			vacuumColumnList = VacuumColumnList(vacuumStmt, relationIndex);
-			taskList = VacuumTaskList(relationId, vacuumStmt->options, vacuumColumnList);
+			taskList = VacuumTaskList(relationId, vacuumOptions, vacuumColumnList);
 
 			/* use adaptive executor when enabled */
 			ExecuteUtilityTaskListWithoutResults(taskList);
@@ -110,9 +114,9 @@ ProcessVacuumStmt(VacuumStmt *vacuumStmt, const char *vacuumCommand)
  * false otherwise.
  */
 static bool
-IsDistributedVacuumStmt(VacuumStmt *vacuumStmt, List *vacuumRelationIdList)
+IsDistributedVacuumStmt(int vacuumOptions, List *vacuumRelationIdList)
 {
-	const char *stmtName = (vacuumStmt->options & VACOPT_VACUUM) ? "VACUUM" : "ANALYZE";
+	const char *stmtName = (vacuumOptions & VACOPT_VACUUM) ? "VACUUM" : "ANALYZE";
 	bool distributeStmt = false;
 	ListCell *relationIdCell = NULL;
 	int distributedRelationCount = 0;
@@ -339,3 +343,74 @@ DeparseVacuumColumnNames(List *columnNameList)
 
 	return columnNames->data;
 }
+
+
+#if PG_VERSION_NUM >= 120000
+
+/*
+ * This is mostly ExecVacuum from Postgres's commands/vacuum.c
+ */
+static int
+VacuumStmt_options(VacuumStmt *vacstmt)
+{
+	bool verbose = false;
+	bool skip_locked = false;
+	bool analyze = false;
+	bool freeze = false;
+	bool full = false;
+	bool disable_page_skipping = false;
+	ListCell *lc;
+
+	/* Parse options list */
+	foreach(lc, vacstmt->options)
+	{
+		DefElem *opt = (DefElem *) lfirst(lc);
+
+		/* Parse common options for VACUUM and ANALYZE */
+		if (strcmp(opt->defname, "verbose") == 0)
+		{
+			verbose = defGetBoolean(opt);
+		}
+		else if (strcmp(opt->defname, "skip_locked") == 0)
+		{
+			skip_locked = defGetBoolean(opt);
+		}
+
+		/* Parse options available on VACUUM */
+		else if (strcmp(opt->defname, "analyze") == 0)
+		{
+			analyze = defGetBoolean(opt);
+		}
+		else if (strcmp(opt->defname, "freeze") == 0)
+		{
+			freeze = defGetBoolean(opt);
+		}
+		else if (strcmp(opt->defname, "full") == 0)
+		{
+			full = defGetBoolean(opt);
+		}
+		else if (strcmp(opt->defname, "disable_page_skipping") == 0)
+		{
+			disable_page_skipping = defGetBoolean(opt);
+		}
+	}
+
+	return (vacstmt->is_vacuumcmd ? VACOPT_VACUUM : VACOPT_ANALYZE) |
+		   (verbose ? VACOPT_VERBOSE : 0) |
+		   (skip_locked ? VACOPT_SKIP_LOCKED : 0) |
+		   (analyze ? VACOPT_ANALYZE : 0) |
+		   (freeze ? VACOPT_FREEZE : 0) |
+		   (full ? VACOPT_FULL : 0) |
+		   (disable_page_skipping ? VACOPT_DISABLE_PAGE_SKIPPING : 0);
+}
+
+
+#else
+static int
+VacuumStmt_options(VacuumStmt *vacuumStmt)
+{
+	return vacuumStmt->options;
+}
+
+
+#endif
