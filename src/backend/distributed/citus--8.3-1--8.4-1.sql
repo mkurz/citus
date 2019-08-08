@@ -55,17 +55,15 @@ BEGIN
         PERFORM master_drop_sequences(sequence_names);
     END IF;
 
-    -- remove entries from citus.pg_dist_object for all dropped objects
-    FOR v_obj IN SELECT * FROM pg_event_trigger_dropped_objects() AS drop_object
-                          JOIN citus.pg_dist_object AS dist_object
-                            ON (dist_object.classid = drop_object.classid
-                                AND dist_object.objid = drop_object.objid
-                                AND drop_object.objsubid = 0)
-    LOOP
-        DELETE FROM citus.pg_dist_object
-              WHERE classid = v_obj.classid
-                AND objid = v_obj.objid;
-    END LOOP;
+    -- remove entries from citus.pg_dist_object for all dropped root (objsubid = 0) objects
+    DELETE FROM citus.pg_dist_object AS dist_object
+    WHERE EXISTS (
+        SELECT 1
+          FROM pg_event_trigger_dropped_objects() AS drop_object
+          WHERE dist_object.classid = drop_object.classid
+            AND dist_object.objid = drop_object.objid
+            AND drop_object.objsubid = 0
+    );
 
 END;
 $cdbdt$;
