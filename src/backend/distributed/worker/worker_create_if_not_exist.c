@@ -94,7 +94,6 @@ drop_stmt_from_object_create(Node *createStmt)
 			ereport(ERROR, (errmsg("unsupported statement to check existence for"),
 							errhint("The coordinator send an unsupported command to the "
 									"worker")));
-			return false;
 		}
 	}
 }
