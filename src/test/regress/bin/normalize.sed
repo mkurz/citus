@@ -17,6 +17,7 @@ s/assigned task [0-9]+ to node/assigned task to node/
 # the generated plan
 s/"(foreign_key_2_|fkey_ref_to_dist_|fkey_ref_)[0-9]+"/"\1xxxxxxx"/g
 s/"(referenced_table_|referencing_table_|referencing_table2_)[0-9]+"/"\1xxxxxxx"/g
+s/"(referencing_table_0_|referenced_table2_)[0-9]+"/"\1xxxxxxx"/g
 s/\(id\)=\([0-9]+\)/(id)=(X)/g
 s/\(ref_id\)=\([0-9]+\)/(ref_id)=(X)/g
 
