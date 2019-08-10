@@ -940,13 +940,6 @@ ExecuteSingleSelectTask(CitusScanState *scanState, Task *task)
 			placementAccessList = list_make1(placementAccess);
 		}
 
-		if (placementAccessList == NIL)
-		{
-			ereport(ERROR, (errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
-							errmsg("a placement was moved after the SELECT was "
-								   "planned")));
-		}
-
 		connection = GetPlacementListConnection(connectionFlags, placementAccessList,
 												NULL);
 
@@ -1317,9 +1310,6 @@ GetModifyConnections(Task *task, bool markCritical)
 
 		multiConnectionList = lappend(multiConnectionList, multiConnection);
 	}
-
-	/* then finish in parallel */
-	FinishConnectionListEstablishment(multiConnectionList);
 
 	/* and start transactions if applicable */
 	RemoteTransactionsBeginIfNecessary(multiConnectionList);
