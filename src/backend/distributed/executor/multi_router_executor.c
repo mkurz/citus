@@ -336,6 +336,22 @@ AcquireExecutorShardLocks(Task *task, RowModifyLevel modLevel)
 
 		LockRelationShardResources(task->relationShardList, ExclusiveLock);
 	}
+
+	/*
+	 * If we are modifying a table with replication factor > 1 we should also
+	 * lock referenced reference tables. Referenced tables can cascade their
+	 * changes to this table, and we want to serialize changes to keep different
+	 * replicas consistent.
+	 *
+	 * See https://github.com/citusdata/citus/pull/2864#issuecomment-520020075
+	 * for an example of what can go wrong without this check.
+	 */
+	if (modLevel >= ROW_MODIFY_COMMUTATIVE &&
+		list_length(task->taskPlacementList) > 1)
+	{
+		int64 shardId = task->anchorShardId;
+		LockReferencedReferenceShardDistributionMetadata(shardId, ExclusiveLock);
+	}
 }
 
 

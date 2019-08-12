@@ -349,8 +349,8 @@ LockReferencedReferenceShardDistributionMetadata(uint64 shardId, LOCKMODE lock)
 
 
 /*
- * GetSortedReferenceShards iterates through the given relation list.
- * Lists the shards of reference tables and returns the list after sorting.
+ * GetSortedReferenceShardIntervals iterates through the given relation list,
+ * lists the shards of reference tables, and returns the list after sorting.
  */
 List *
 GetSortedReferenceShardIntervals(List *relationList)
